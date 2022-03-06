@@ -197,6 +197,9 @@ lock_acquire (struct lock *lock)
   ASSERT (!intr_context ());
   ASSERT (!lock_held_by_current_thread (lock));
 
+  if (lock->holder) {
+    thread_donate_priority(thread_current(), lock->holder, lock);
+  }
   sema_down (&lock->semaphore);
   lock->holder = thread_current ();
 }
@@ -216,7 +219,7 @@ lock_try_acquire (struct lock *lock)
   ASSERT (!lock_held_by_current_thread (lock));
 
   success = sema_try_down (&lock->semaphore);
-  if (success)
+  if (success) 
     lock->holder = thread_current ();
   return success;
 }
@@ -233,6 +236,11 @@ lock_release (struct lock *lock)
   ASSERT (lock_held_by_current_thread (lock));
 
   lock->holder = NULL;
+  /*
+    thread_restore_priority must be called before sema_up, 
+    because sema_up will cause one of the donors to be removed from waiters list
+  */
+  thread_restore_priority(thread_current(), lock);
   sema_up (&lock->semaphore);
 }
 

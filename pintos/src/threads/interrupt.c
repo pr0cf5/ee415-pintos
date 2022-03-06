@@ -395,7 +395,6 @@ unexpected_interrupt (const struct intr_frame *f)
 {
   /* Count the number so far. */
   unsigned int n = ++unexpected_cnt[f->vec_no];
-
   /* If the number is a power of 2, print a message.  This rate
      limiting means that we get information about an uncommon
      unexpected interrupt the first time and fairly often after

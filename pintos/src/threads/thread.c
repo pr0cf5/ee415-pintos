@@ -12,6 +12,7 @@
 #include "threads/switch.h"
 #include "threads/synch.h"
 #include "threads/vaddr.h"
+#include "threads/malloc.h"
 #ifdef USERPROG
 #include "userprog/process.h"
 #endif
@@ -599,6 +600,9 @@ schedule (void)
 
   ASSERT (intr_get_level () == INTR_OFF);
   ASSERT (cur->status != THREAD_RUNNING);
+  if (next->magic != THREAD_MAGIC) {
+    PANIC("next = %p, next->magic = %x\n", next, next->magic);
+  }
   ASSERT (is_thread (next));
 
   if (cur != next)
@@ -685,9 +689,10 @@ static struct priority_donation_info_entry *donation_info_entry_new(struct threa
   return new_pdie;
 }
 
-static struct priority_restoration_info_entry *restoration_info_entry_new(struct lock *lock, int orig_priority) {
+static struct priority_restoration_info_entry *restoration_info_entry_new(struct lock *lock, int new_priority, int orig_priority) {
   struct priority_restoration_info_entry *new_prie = malloc(sizeof(struct priority_donation_info_entry));
   new_prie->lock = lock;
+  new_prie->new_priority = new_priority;
   new_prie->orig_priority = orig_priority;
   return new_prie;
 }
@@ -697,42 +702,45 @@ static void priority_info_add_donation(struct thread_priority_info *pi, struct t
   list_push_back(&pi->donation_info_list, &pdie_new->elem);
 }
 
-static void priority_info_add_restoration(struct thread_priority_info *pi, struct lock *lock, int orig_priority) {
-  struct list *r_list = &pi->restoration_info_list;
-  struct priority_restoration_info_entry *prie_new = restoration_info_entry_new(lock, orig_priority);
-  bool already_exists = false;
-  for (struct list_elem *e = list_begin(r_list); e != list_end(r_list); e = list_next(e)) {
-    struct priority_restoration_info_entry *prie_cur = list_entry(e, struct priority_restoration_info_entry, elem);
-    if (prie_cur->lock == lock) {
-      /* 
-        To branch into this block, a thread must have at least two waiters for the same lock.
-        Therefore, {orig_priority} is always higher or equal to {cur->orig_priority} because it is either unchanged
-        or elevated due to priority donation
-      */
-      ASSERT(prie_cur->orig_priority <= prie_new->orig_priority);
-      already_exists = true;
+static void priority_info_delete_donation(struct thread_priority_info *pi, struct thread *recipient, struct lock *lock) {
+  struct list *d_list = &pi->donation_info_list;
+  struct list_elem *cur, *next;
+  struct priority_donation_info_entry *pdie_cur;
+  if (!list_empty(d_list)) {
+    cur = list_begin(d_list);
+    while (cur != list_end(d_list)) {
+      next = list_next(cur);
+      pdie_cur = list_entry(cur, struct thread, sleep_info.elem);
+      if (pdie_cur->recipient == recipient && pdie_cur->lock == lock) {
+        /* may hit or not hit, but must hit at least once */
+        list_remove(&pdie_cur->elem);
+        free(pdie_cur);
+        break;
+      }
+      cur = next;
     }
-  }
-  if (!already_exists) {
-    list_push_back(r_list, &prie_new->elem);
   }
 }
 
-static void priority_info_restore(struct thread_priority_info *pi, struct lock *lock, int *priority_out) {
+static void priority_info_add_restoration(struct thread_priority_info *pi, struct lock *lock, int new_priority, int orig_priority) {
+  struct priority_restoration_info_entry *prie_new = restoration_info_entry_new(lock, new_priority, orig_priority);
+  list_push_back(&pi->restoration_info_list, &prie_new->elem);
+}
+
+static void priority_info_delete_restoration(struct thread_priority_info *pi, struct lock *lock, int *priority_out) {
   struct list *r_list = &pi->restoration_info_list;
-  bool success = false;
+  if (list_empty(r_list)) {
+    return;
+  }
   for (struct list_elem *e = list_begin(r_list); e != list_end(r_list); e = list_next(e)) {
     struct priority_restoration_info_entry *prie_cur = list_entry(e, struct priority_restoration_info_entry, elem);
     if (prie_cur->lock == lock) {
-      /* must hit only once */
-      ASSERT(!success);
       list_remove(&prie_cur->elem);
       *priority_out = prie_cur->orig_priority;
       free(prie_cur);
-      success = true;
+      break;
     }
   }
-  ASSERT(success);
 }
 
 void thread_donate_priority(struct thread *donor, struct thread *recipient, struct lock *lock) {
@@ -740,6 +748,8 @@ void thread_donate_priority(struct thread *donor, struct thread *recipient, stru
     return;
   }
   struct list *rd_lst = &recipient->priority_info.donation_info_list;
+  priority_info_add_donation(&donor->priority_info, recipient, lock);
+  priority_info_add_restoration(&recipient->priority_info, lock, donor->priority, recipient->priority);
   recipient->priority = donor->priority;
   for (struct list_elem *e = list_begin(rd_lst); e != list_end(rd_lst); e = list_next(e)) {
     struct priority_donation_info_entry *pdie = list_entry(e, struct priority_donation_info_entry, elem);
@@ -748,5 +758,15 @@ void thread_donate_priority(struct thread *donor, struct thread *recipient, stru
 }
 
 void thread_restore_priority(struct thread *t, struct lock *lock) {
-  priority_info_restore(&t->priority_info, lock, &t->priority);
+  /*
+    If the deleted restoration entry is the last entry in the array, immediately change the current thread's priority.
+    Then, pop all entries up to deferred
+    If it isn't defer the change by setting a deferred bit
+  */
+  struct list *r_list = &t->priority_info.restoration_info_list;
+  priority_info_delete_restoration(&t->priority_info, lock, &t->priority);
+  for (struct list_elem *e = list_begin(&lock->semaphore.waiters); e != list_end(&lock->semaphore.waiters); e = list_next(e)) {
+    struct thread *potential_donor = list_entry(e, struct thread, elem);
+    priority_info_delete_donation(&potential_donor->priority_info, t, lock);
+  }
 }

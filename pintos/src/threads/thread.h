@@ -38,6 +38,7 @@ struct priority_donation_info_entry {
 
 struct priority_restoration_info_entry {
    struct lock *lock;
+   int new_priority;
    int orig_priority;
    struct list_elem elem;
 };
