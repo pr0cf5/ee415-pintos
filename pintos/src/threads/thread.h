@@ -24,6 +24,29 @@ typedef int tid_t;
 #define PRI_DEFAULT 31                  /* Default priority. */
 #define PRI_MAX 63                      /* Highest priority. */
 
+struct thread_sleep_info {
+   bool is_sleeping;
+   struct list_elem elem;
+   int64_t wakeup_time;
+};
+
+struct priority_donation_info_entry {
+   struct thread *recipient;
+   struct lock *lock;
+   struct list_elem elem;
+};
+
+struct priority_restoration_info_entry {
+   struct lock *lock;
+   int orig_priority;
+   struct list_elem elem;
+};
+
+struct thread_priority_info {
+   struct list donation_info_list;
+   struct list restoration_info_list;
+};
+
 /* A kernel thread or user process.
 
    Each thread structure is stored in its own 4 kB page.  The
@@ -93,6 +116,10 @@ struct thread
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /* List element. */
 
+    /* used for timer_sleep */
+    struct thread_sleep_info sleep_info;
+    struct thread_priority_info priority_info;
+
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /* Page directory. */
@@ -139,4 +166,14 @@ void thread_set_nice (int);
 int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
 
+/* used for timer_sleep */
+bool thread_enter_sleep(int64_t sleep_ticks);
+bool thread_exit_sleep(struct thread *t);
+
+/* used for scheduling */
+struct thread *thread_remove_highest_priority_thread(struct list *thread_list);
+
+/* used for priority donation */
+void thread_donate_priority(struct thread *donor, struct thread *recipient, struct lock *lock);
+void thread_restore_priority(struct thread *t, struct lock *lock);
 #endif /* threads/thread.h */
