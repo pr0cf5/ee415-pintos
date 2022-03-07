@@ -4,6 +4,7 @@
 #include <debug.h>
 #include <list.h>
 #include <stdint.h>
+#include "threads/synch.h"
 
 /* States in a thread's life cycle. */
 enum thread_status
@@ -28,24 +29,6 @@ struct thread_sleep_info {
    bool is_sleeping;
    struct list_elem elem;
    int64_t wakeup_time;
-};
-
-struct priority_donation_info_entry {
-   struct thread *recipient;
-   struct lock *lock;
-   struct list_elem elem;
-};
-
-struct priority_restoration_info_entry {
-   struct lock *lock;
-   int new_priority;
-   int orig_priority;
-   struct list_elem elem;
-};
-
-struct thread_priority_info {
-   struct list donation_info_list;
-   struct list restoration_info_list;
 };
 
 /* A kernel thread or user process.
@@ -119,7 +102,6 @@ struct thread
 
     /* used for timer_sleep */
     struct thread_sleep_info sleep_info;
-    struct thread_priority_info priority_info;
 
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
