@@ -31,6 +31,14 @@ struct thread_sleep_info {
    int64_t wakeup_time;
 };
 
+struct thread_priority_donation_info {
+   int genesis_priority;
+   struct lock *lock;
+   struct thread *recipient;
+   struct list donor_threads_list;
+   struct list_elem elem;
+};
+
 /* A kernel thread or user process.
 
    Each thread structure is stored in its own 4 kB page.  The
@@ -102,6 +110,7 @@ struct thread
 
     /* used for timer_sleep */
     struct thread_sleep_info sleep_info;
+    struct thread_priority_donation_info priority_donation_info;
 
 #ifdef USERPROG
     /* Owned by userprog/process.c. */

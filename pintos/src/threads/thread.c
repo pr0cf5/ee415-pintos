@@ -354,12 +354,19 @@ thread_foreach (thread_action_func *func, void *aux)
 void
 thread_set_priority (int new_priority) 
 {
-  if (thread_get_priority() > new_priority) {
-    thread_current ()->priority = new_priority;
-    thread_yield();
+  int original_priority = thread_get_priority(), real_new_priority;
+  struct thread *current = thread_current();
+  struct list *donor_threads_list = &current->priority_donation_info.donor_threads_list;
+  thread_current()->priority_donation_info.genesis_priority = new_priority;
+  /* recalculate priority here */
+  real_new_priority = new_priority;
+  for (struct list_elem *e = list_begin(donor_threads_list); e != list_end(donor_threads_list); e = list_next(e)) {
+    struct thread *t = list_entry(e, struct thread, priority_donation_info.elem);
+    real_new_priority = t->priority > real_new_priority ? t->priority : real_new_priority;
   }
-  else {
-    thread_current ()->priority = new_priority;
+  thread_current()->priority = real_new_priority;
+  if (original_priority > real_new_priority) {
+    thread_yield();
   }
 }
 
@@ -478,6 +485,13 @@ static void init_thread_sleep_info(struct thread *t) {
   t->sleep_info.wakeup_time = 0;
 }
 
+static void init_thread_priority_donation_info(struct thread *t) {
+  t->priority_donation_info.genesis_priority = t->priority;
+  t->priority_donation_info.lock = NULL;
+  t->priority_donation_info.recipient = NULL;
+  list_init(&t->priority_donation_info.donor_threads_list);
+}
+
 /* Does basic initialization of T as a blocked thread named
    NAME. */
 static void
@@ -500,6 +514,7 @@ init_thread (struct thread *t, const char *name, int priority)
   list_push_back (&all_list, &t->allelem);
 
   init_thread_sleep_info(t);
+  init_thread_priority_donation_info(t);
   intr_set_level (old_level);
 }
 
@@ -675,16 +690,73 @@ struct thread *thread_remove_highest_priority_thread(struct list *thread_list) {
   return list_entry(e, struct thread, elem);
 }
 
+#define SWAP(type, x1, x2) { type tmp = x1; x1 = x2; x2 = tmp; }
+
 void thread_donate_priority(struct thread *donor, struct thread *recipient, struct lock *lock) {
+  ASSERT(is_thread(donor));
+  ASSERT(is_thread(recipient));
   if (recipient->priority > donor->priority) {
     return;
   }
-  ASSERT(is_thread(donor));
-  ASSERT(is_thread(recipient));
-  
+
+  ASSERT(donor->priority_donation_info.recipient == NULL);
+  recipient->priority = donor->priority;
+  donor->priority_donation_info.lock = lock;
+  donor->priority_donation_info.recipient = recipient;
+  list_push_back(&recipient->priority_donation_info.donor_threads_list, &donor->priority_donation_info.elem);
+
+  struct thread *cur = recipient, *next;
+  while(1) {
+    next = cur->priority_donation_info.recipient;
+    if (next == NULL) {
+      break;
+    }
+    if (cur->priority > next->priority) {
+      // DO NOT list_push_back here. cur is already included in next's donor_threads_list
+      next->priority = cur->priority;
+      cur = next;
+    }
+    else {
+      break;
+    }
+  }
 }
 
-void thread_restore_priority(struct thread *t, struct lock *lock) {
-  ASSERT(is_thread(t));
-
+void thread_restore_priority(struct thread *recipient, struct lock *lock) {
+  ASSERT(is_thread(recipient));
+  struct list *donor_threads_list = &recipient->priority_donation_info.donor_threads_list;
+  struct list_elem *cur, *next;
+  int priority = 0;
+  bool success = false;
+  if (!list_empty(donor_threads_list)) {
+    cur = list_begin(donor_threads_list);
+    while (cur != list_end(donor_threads_list)) {
+      next = list_next(cur);
+      struct thread *donor = list_entry(cur, struct thread, priority_donation_info.elem);
+      if (donor->priority_donation_info.lock == lock && donor->priority_donation_info.recipient == recipient) {
+        list_remove(&donor->priority_donation_info.elem);
+        donor->priority_donation_info.lock = NULL;
+        donor->priority_donation_info.recipient = NULL;
+        success = true;
+      }
+      cur = next;
+    }
+    if (!success) {
+      return;
+    }
+    if (!list_empty(donor_threads_list)) {
+      for (struct list_elem *e = list_begin(donor_threads_list); e != list_end(donor_threads_list); e = list_next(e)) {
+        struct thread *donor = list_entry(e, struct thread, priority_donation_info.elem);
+        priority = donor->priority > priority ? donor->priority : priority;
+      }
+      recipient->priority = priority;
+    }
+    else {
+      recipient->priority = recipient->priority_donation_info.genesis_priority;
+    }
+  }
+  else {
+    return;
+  }
+  
 }
