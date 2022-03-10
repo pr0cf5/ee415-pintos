@@ -1,4 +1,6 @@
+#define ENABLE_FIXED_POINT
 #include "threads/thread.h"
+#undef ENABLE_FIXED_POINT
 #include <debug.h>
 #include <stddef.h>
 #include <random.h>
@@ -63,6 +65,9 @@ static unsigned thread_ticks;   /* # of timer ticks since last yield. */
    Controlled by kernel command-line option "-o mlfqs". */
 bool thread_mlfqs;
 bool thread_report_latency;
+
+/* load_avg is a system wide value */
+fixed64 mlfqs_load_avg;
 
 static void kernel_thread (thread_func *, void *aux);
 
@@ -129,6 +134,7 @@ void
 thread_tick (void) 
 {
   struct thread *t = thread_current ();
+  int64_t current_time = timer_ticks();
 
   /* Update statistics. */
   if (t == idle_thread)
@@ -144,7 +150,10 @@ thread_tick (void)
   if (++thread_ticks >= TIME_SLICE)
     intr_yield_on_return ();
 
-  /* wake up threads in sleeper_list */
+  /*
+    wake up threads in sleeper_list
+    also, update their time related information
+  */
   struct list_elem *cur, *next;
   struct thread *cur_t;
   if (!list_empty(&sleeper_list)) {
@@ -156,6 +165,35 @@ thread_tick (void)
       cur = next;
     }
   }
+
+  if (thread_mlfqs) {
+    if (t != idle_thread) {
+      t->mlfqs_recent_cpu = fixed64_add_int32(t->mlfqs_recent_cpu, 1);
+    }
+    if (current_time % TIMER_FREQ == 0) {
+      mlfqs_recalculate_load_avg();
+    }
+  }
+  
+  /* iterate all threads and update their time-related variables */
+  for (struct list_elem *e = list_begin(&all_list); e != list_end(&all_list); e = list_next(e)) {
+    /* increment timestamp */
+    struct thread *cur_t = list_entry(e, struct thread, allelem);
+    if (cur_t == idle_thread) {
+      continue;
+    }
+    cur_t->thread_ticks++;
+    /* do mlfqs related stuff */
+    if (thread_mlfqs) {
+      if (current_time % 4 == 0) {
+        thread_mlfqs_recalculate_priority(cur_t);
+      }
+      if (current_time % TIMER_FREQ == 0) {
+        thread_mlfqs_recalculate_recent_cpu(cur_t);
+      }
+    }
+  }
+  
 }
 
 /* Prints thread statistics. */
@@ -381,31 +419,36 @@ thread_get_priority (void)
 void
 thread_set_nice (int nice UNUSED) 
 {
-  /* Not yet implemented. */
+  ASSERT(thread_mlfqs);
+  struct thread *current = thread_current();
+  current->mlfqs_nice = nice;
 }
 
 /* Returns the current thread's nice value. */
 int
 thread_get_nice (void) 
 {
-  /* Not yet implemented. */
-  return 0;
+  ASSERT(thread_mlfqs);
+  struct thread *current = thread_current();
+  return current->mlfqs_nice;
 }
 
 /* Returns 100 times the system load average. */
 int
 thread_get_load_avg (void) 
 {
-  /* Not yet implemented. */
-  return 0;
+  ASSERT(thread_mlfqs);
+  struct thread *current = thread_current();
+  return fixed64_to_int32(fixed64_mul_int32(mlfqs_load_avg, 100));
 }
 
 /* Returns 100 times the current thread's recent_cpu value. */
 int
 thread_get_recent_cpu (void) 
 {
-  /* Not yet implemented. */
-  return 0;
+  ASSERT(thread_mlfqs);
+  struct thread *current = thread_current();
+  return fixed64_to_int32(fixed64_mul_int32(current->mlfqs_recent_cpu, 100));
 }
 
 /* Idle thread.  Executes when no other thread is ready to run.
@@ -515,6 +558,9 @@ init_thread (struct thread *t, const char *name, int priority)
 
   init_thread_sleep_info(t);
   init_thread_priority_donation_info(t);
+  t->thread_ticks = 0;
+  t->mlfqs_nice = 0;
+  t->mlfqs_recent_cpu = 0;
   intr_set_level (old_level);
 }
 
@@ -757,6 +803,51 @@ void thread_restore_priority(struct thread *recipient, struct lock *lock) {
   }
   else {
     return;
+  } 
+}
+
+static int priority_clamp(int pri) {
+  if (pri > PRI_MAX) {
+    return PRI_MAX;
   }
-  
+  else if (pri < PRI_MIN) {
+    return PRI_MIN;
+  }
+  else {
+    return pri;
+  }
+}
+
+void thread_mlfqs_recalculate_priority(struct thread *current) {
+  ASSERT(thread_mlfqs);
+  ASSERT(current != idle_thread);
+  current->priority = priority_clamp(PRI_MAX 
+    - fixed64_to_int32(fixed64_div_int32(current->mlfqs_recent_cpu, 4))
+    - current->mlfqs_nice * 2);
+}
+
+void thread_mlfqs_recalculate_recent_cpu(struct thread *current) {
+  ASSERT(thread_mlfqs);
+  ASSERT(current != idle_thread);
+  current->mlfqs_recent_cpu = fixed64_add_int32(
+      fixed64_mul(fixed64_div(
+        fixed64_mul_int32(mlfqs_load_avg, 2),
+        fixed64_add_int32(fixed64_mul_int32(mlfqs_load_avg, 2), 1)), current->mlfqs_recent_cpu),
+      current->mlfqs_nice);
+}
+
+void mlfqs_recalculate_load_avg() {
+  ASSERT(thread_mlfqs);
+  int ready_threads = thread_current() == idle_thread ? 0 : 1;
+  for (struct list_elem *e = list_begin(&ready_list); e != list_end(&ready_list); e = list_next(e)) {
+    struct thread *t = list_entry(e, struct thread, elem);
+    if (t != idle_thread) {
+      ready_threads++;
+    }
+  }
+  fixed64 p = fixed64_div_int32(int32_to_fixed64(59), 60);
+  fixed64 q = fixed64_div_int32(int32_to_fixed64(1), 60);
+  mlfqs_load_avg = fixed64_add(
+    fixed64_mul(p, mlfqs_load_avg),
+    fixed64_mul_int32(q, ready_threads));
 }

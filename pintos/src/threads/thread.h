@@ -5,6 +5,7 @@
 #include <list.h>
 #include <stdint.h>
 #include "threads/synch.h"
+#include "threads/fixed-point.h"
 
 /* States in a thread's life cycle. */
 enum thread_status
@@ -106,11 +107,18 @@ struct thread
     struct list_elem allelem;           /* List element for all threads list. */
 
     /* Shared between thread.c and synch.c. */
-    struct list_elem elem;              /* List element. */
+   struct list_elem elem;              /* List element. */
 
     /* used for timer_sleep */
-    struct thread_sleep_info sleep_info;
-    struct thread_priority_donation_info priority_donation_info;
+   struct thread_sleep_info sleep_info;
+
+    /* used for priority donation */
+   struct thread_priority_donation_info priority_donation_info;
+
+    /* used for advanced scheduling and latency reporting. load_avg is a global value */
+   int64_t thread_ticks;
+   int mlfqs_nice;
+   fixed64 mlfqs_recent_cpu;
 
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
@@ -167,5 +175,11 @@ struct thread *thread_remove_highest_priority_thread(struct list *thread_list);
 
 /* used for priority donation */
 void thread_donate_priority(struct thread *donor, struct thread *recipient, struct lock *lock);
-void thread_restore_priority(struct thread *t, struct lock *lock);
+void thread_restore_priority(struct thread *recipient, struct lock *lock);
+
+/* used for mlfqs */
+void thread_mlfqs_recalculate_priority(struct thread *current);
+void thread_mlfqs_recalculate_recent_cpu(struct thread *current);
+/* since load_avg is a system wide value, we do not prefix this function with thread_ */
+void mlfqs_recalculate_load_avg();
 #endif /* threads/thread.h */
