@@ -156,11 +156,15 @@ thread_tick (void)
   */
   struct list_elem *cur, *next;
   struct thread *cur_t;
+  /* list is sorted in increasing order */
   if (!list_empty(&sleeper_list)) {
     cur = list_begin(&sleeper_list);
     while (cur != list_end(&sleeper_list)) {
       next = list_next(cur);
       cur_t = list_entry(cur, struct thread, sleep_info.elem);
+      if (cur_t->sleep_info.wakeup_time > timer_ticks()) {
+        break;
+      }
       thread_exit_sleep(cur_t);
       cur = next;
     }
@@ -682,6 +686,14 @@ allocate_tid (void)
    Used by switch.S, which can't figure it out on its own. */
 uint32_t thread_stack_ofs = offsetof (struct thread, stack);
 
+static bool thread_wakeup_time_less(struct list_elem *e1, struct list_elem *e2, void *aux) {
+  struct thread *t1 = list_entry(e1, struct thread, sleep_info.elem);
+  struct thread *t2 = list_entry(e2, struct thread, sleep_info.elem);
+  ASSERT(t1->sleep_info.is_sleeping);
+  ASSERT(t2->sleep_info.is_sleeping);
+  return t1->sleep_info.wakeup_time < t2->sleep_info.wakeup_time;
+}
+
 /* Sets up t->sleep_info and blocks the current thread */
 bool thread_enter_sleep(int64_t sleep_ticks) {
   ASSERT(thread_current()->sleep_info.is_sleeping == false);
@@ -690,7 +702,7 @@ bool thread_enter_sleep(int64_t sleep_ticks) {
     struct thread *t = thread_current();
     t->sleep_info.is_sleeping = true;
     t->sleep_info.wakeup_time = timer_ticks() + sleep_ticks;
-    list_push_back(&sleeper_list, &t->sleep_info.elem);
+    list_insert_ordered(&sleeper_list, &t->sleep_info.elem, thread_wakeup_time_less, NULL);
     thread_block();
     intr_set_level(old_level);
     return true;
