@@ -183,10 +183,10 @@ thread_tick (void)
   for (struct list_elem *e = list_begin(&all_list); e != list_end(&all_list); e = list_next(e)) {
     /* increment timestamp */
     struct thread *cur_t = list_entry(e, struct thread, allelem);
+    cur_t->thread_ticks++;
     if (cur_t == idle_thread) {
       continue;
     }
-    cur_t->thread_ticks++;
     /* do mlfqs related stuff */
     if (thread_mlfqs) {
       if (current_time % 4 == 0) {
@@ -352,6 +352,9 @@ thread_exit (void)
      when it calls thread_schedule_tail(). */
   intr_disable ();
   list_remove (&thread_current()->allelem);
+  if (thread_report_latency) {
+    printf("Thread %s completed in %d ticks\n", thread_current()->name, thread_current()->thread_ticks);
+  }
   thread_current ()->status = THREAD_DYING;
   schedule ();
   NOT_REACHED ();
