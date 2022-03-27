@@ -1,5 +1,5 @@
-diff -ruN pintos/src/lib/syscall-nr.h pintos2/src/lib/syscall-nr.h
---- pintos/src/lib/syscall-nr.h	2022-03-02 06:23:26.000000000 +0900
+diff -ruN pintos1/src/lib/syscall-nr.h pintos2/src/lib/syscall-nr.h
+--- pintos1/src/lib/syscall-nr.h	2022-03-02 06:23:26.000000000 +0900
 +++ pintos2/src/lib/syscall-nr.h	2022-03-23 23:32:11.000000000 +0900
 @@ -18,6 +18,9 @@
      SYS_SEEK,                   /* Change position in a file. */
@@ -11,8 +11,8 @@ diff -ruN pintos/src/lib/syscall-nr.h pintos2/src/lib/syscall-nr.h
  
      /* Project 3 and optionally project 4. */
      SYS_MMAP,                   /* Map a file into memory. */
-diff -ruN pintos/src/lib/user/syscall.c pintos2/src/lib/user/syscall.c
---- pintos/src/lib/user/syscall.c	2022-03-02 06:23:26.000000000 +0900
+diff -ruN pintos1/src/lib/user/syscall.c pintos2/src/lib/user/syscall.c
+--- pintos1/src/lib/user/syscall.c	2022-03-02 06:23:26.000000000 +0900
 +++ pintos2/src/lib/user/syscall.c	2022-03-23 23:29:57.000000000 +0900
 @@ -141,6 +141,21 @@
    syscall1 (SYS_CLOSE, fd);
@@ -36,8 +36,8 @@ diff -ruN pintos/src/lib/user/syscall.c pintos2/src/lib/user/syscall.c
  mapid_t
  mmap (int fd, void *addr)
  {
-diff -ruN pintos/src/lib/user/syscall.h pintos2/src/lib/user/syscall.h
---- pintos/src/lib/user/syscall.h	2022-03-02 06:23:26.000000000 +0900
+diff -ruN pintos1/src/lib/user/syscall.h pintos2/src/lib/user/syscall.h
+--- pintos1/src/lib/user/syscall.h	2022-03-02 06:23:26.000000000 +0900
 +++ pintos2/src/lib/user/syscall.h	2022-03-23 23:29:57.000000000 +0900
 @@ -33,6 +33,12 @@
  void seek (int fd, unsigned position);
@@ -52,8 +52,8 @@ diff -ruN pintos/src/lib/user/syscall.h pintos2/src/lib/user/syscall.h
  
  /* Project 3 and optionally project 4. */
  mapid_t mmap (int fd, void *addr);
-diff -ruN pintos/src/tests/userprog/child-sig.c pintos2/src/tests/userprog/child-sig.c
---- pintos/src/tests/userprog/child-sig.c	1970-01-01 09:00:00.000000000 +0900
+diff -ruN pintos1/src/tests/userprog/child-sig.c pintos2/src/tests/userprog/child-sig.c
+--- pintos1/src/tests/userprog/child-sig.c	1970-01-01 09:00:00.000000000 +0900
 +++ pintos2/src/tests/userprog/child-sig.c	2022-03-23 23:28:16.000000000 +0900
 @@ -0,0 +1,28 @@
 +/* Child process run by exec-multiple, exec-one, wait-simple, and
@@ -85,8 +85,8 @@ diff -ruN pintos/src/tests/userprog/child-sig.c pintos2/src/tests/userprog/child
 +void sig_handler2(void) {
 +}
 \ No newline at end of file
-diff -ruN pintos/src/tests/userprog/Grading pintos2/src/tests/userprog/Grading
---- pintos/src/tests/userprog/Grading	2022-03-02 06:23:26.000000000 +0900
+diff -ruN pintos1/src/tests/userprog/Grading pintos2/src/tests/userprog/Grading
+--- pintos1/src/tests/userprog/Grading	2022-03-02 06:23:26.000000000 +0900
 +++ pintos2/src/tests/userprog/Grading	2022-03-24 00:02:33.000000000 +0900
 @@ -5,7 +5,8 @@
  # If you do so properly, the base file system functionality
@@ -101,8 +101,8 @@ diff -ruN pintos/src/tests/userprog/Grading pintos2/src/tests/userprog/Grading
 +30%	tests/userprog/Rubric.signal
 +7%	tests/userprog/no-vm/Rubric
 +21%	tests/filesys/base/Rubric
-diff -ruN pintos/src/tests/userprog/Make.tests pintos2/src/tests/userprog/Make.tests
---- pintos/src/tests/userprog/Make.tests	2022-03-02 06:23:26.000000000 +0900
+diff -ruN pintos1/src/tests/userprog/Make.tests pintos2/src/tests/userprog/Make.tests
+--- pintos1/src/tests/userprog/Make.tests	2022-03-02 06:23:26.000000000 +0900
 +++ pintos2/src/tests/userprog/Make.tests	2022-03-23 23:28:26.000000000 +0900
 @@ -16,10 +16,10 @@
  exec-bound-3 exec-multiple exec-missing exec-bad-ptr wait-simple        \
@@ -140,15 +140,15 @@ diff -ruN pintos/src/tests/userprog/Make.tests pintos2/src/tests/userprog/Make.t
  
  tests/userprog/exec-arg_PUTFILES += tests/userprog/child-args
  tests/userprog/exec-bound_PUTFILES += tests/userprog/child-args
-diff -ruN pintos/src/tests/userprog/Rubric.signal pintos2/src/tests/userprog/Rubric.signal
---- pintos/src/tests/userprog/Rubric.signal	1970-01-01 09:00:00.000000000 +0900
+diff -ruN pintos1/src/tests/userprog/Rubric.signal pintos2/src/tests/userprog/Rubric.signal
+--- pintos1/src/tests/userprog/Rubric.signal	1970-01-01 09:00:00.000000000 +0900
 +++ pintos2/src/tests/userprog/Rubric.signal	2022-03-23 23:28:47.000000000 +0900
 @@ -0,0 +1,3 @@
 +Signal implementation:
 +- Test signal functionality.
 +3	sig-simple
-diff -ruN pintos/src/tests/userprog/sig-simple.c pintos2/src/tests/userprog/sig-simple.c
---- pintos/src/tests/userprog/sig-simple.c	1970-01-01 09:00:00.000000000 +0900
+diff -ruN pintos1/src/tests/userprog/sig-simple.c pintos2/src/tests/userprog/sig-simple.c
+--- pintos1/src/tests/userprog/sig-simple.c	1970-01-01 09:00:00.000000000 +0900
 +++ pintos2/src/tests/userprog/sig-simple.c	2022-03-23 23:28:58.000000000 +0900
 @@ -0,0 +1,17 @@
 +/* Executes and waits for a single child process. */
@@ -168,8 +168,8 @@ diff -ruN pintos/src/tests/userprog/sig-simple.c pintos2/src/tests/userprog/sig-
 +  sendsig (child_pid, SIGTHREE);
 +  wait (child_pid);
 +}
-diff -ruN pintos/src/tests/userprog/sig-simple.ck pintos2/src/tests/userprog/sig-simple.ck
---- pintos/src/tests/userprog/sig-simple.ck	1970-01-01 09:00:00.000000000 +0900
+diff -ruN pintos1/src/tests/userprog/sig-simple.ck pintos2/src/tests/userprog/sig-simple.ck
+--- pintos1/src/tests/userprog/sig-simple.ck	1970-01-01 09:00:00.000000000 +0900
 +++ pintos2/src/tests/userprog/sig-simple.ck	2022-03-23 23:28:58.000000000 +0900
 @@ -0,0 +1,14 @@
 +# -*- perl -*-
