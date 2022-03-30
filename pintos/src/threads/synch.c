@@ -97,7 +97,6 @@ sema_try_down (struct semaphore *sema)
   else
     success = false;
   intr_set_level (old_level);
-
   return success;
 }
 
@@ -117,11 +116,10 @@ sema_up (struct semaphore *sema)
     thread_unblock(thread_remove_highest_priority_thread(&sema->waiters));
   }
   sema->value++;
-  intr_set_level (old_level);
-  if (threading_started) {
+  intr_set_level (old_level);  
+  if (!intr_context() && threading_started) {
     thread_yield();
   }
-  
 }
 
 static void sema_test_helper (void *sema_);

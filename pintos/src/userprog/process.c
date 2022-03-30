@@ -18,53 +18,197 @@
 #include "threads/thread.h"
 #include "threads/vaddr.h"
 
+static struct pid_allocator pid_allocator;
+/* used to prevent race between exec/wait/exit */
+static struct lock process_lock;
+
 static thread_func start_process NO_RETURN;
-static bool load (const char *cmdline, void (**eip) (void), void **esp);
+static bool load (const char *cmdline, struct process_info *pi, void (**eip) (void), void **esp);
+
+/*
+  the caller of this function must enusre that argc has at least argc + 1 available
+*/
+static void
+tokenize (char *input, char **argv) {
+
+  char *next_ptr, *cursor, *end_ptr;
+  int i = 0;
+  int cnt = 0;
+
+  /* find number of spaces */
+  cursor = input; 
+  end_ptr = &input[strlen(input)];
+
+  while (cursor != end_ptr) {
+    if (*cursor == ' ') {
+      cnt++;
+    }
+    cursor++;
+  }
+
+  cursor = strtok_r (input, " ", &next_ptr);
+
+  while(cursor) {
+    argv[i++] = cursor;
+    cursor = strtok_r (NULL, " ", &next_ptr);
+  }
+
+  argv[i] = NULL;
+}
+
+pid_t pid_allocate() {
+  pid_t pid;
+  lock_acquire(&pid_allocator.pid_lock);
+  pid = pid_allocator.last_pid++;
+  lock_release(&pid_allocator.pid_lock);
+  return pid;
+}
+
+void pid_release(pid_t pid) {
+  return;
+}
+
+
+struct process_info *process_info_allocate(struct semaphore *sema, struct process_info *parent_pi) {
+  struct process_info *new;
+  if ((new = malloc(sizeof(struct process_info))) == NULL) {
+    return NULL;
+  }
+  new->pid = pid_allocate();
+  new->thread = thread_current();
+  new->exit_code = 0;
+  new->sema = sema;
+  new->status = PROCESS_RUNNING;
+  new->parent_pi = parent_pi;
+  strlcpy(new->file_name, "process-default", sizeof(new->file_name));
+  list_init(&new->children_pi);
+  return new;
+}
+
+void process_info_release(struct process_info *pi) {
+  if (pi->sema) {
+    free(pi->sema);
+  }
+  pid_release(pi->pid);
+  for (struct list_elem *e = list_begin(&pi->children_pi);
+    e != list_end(&pi->children_pi); e = list_next(e)) {
+      struct process_info *child_pi = list_entry(e, struct process_info, elem);
+      ASSERT(child_pi->parent_pi == pi);
+      child_pi->parent_pi = NULL;
+  }
+  free(pi);
+}
+
+void
+process_init() {
+  lock_init(&pid_allocator.pid_lock);
+  pid_allocator.last_pid = 1;
+  lock_init(&process_lock);
+}
 
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
    before process_execute() returns.  Returns the new process's
    thread id, or TID_ERROR if the thread cannot be created. */
-tid_t
-process_execute (const char *file_name) 
+pid_t
+process_execute (const char *cmd_line) 
 {
-  char *fn_copy;
+  struct process_start_args *args;
   tid_t tid;
+  struct semaphore *sema;
+  struct process_info *pi;
+  bool new_pi = false;
 
   /* Make a copy of FILE_NAME.
      Otherwise there's a race between the caller and load(). */
-  fn_copy = palloc_get_page (0);
-  if (fn_copy == NULL)
-    return TID_ERROR;
-  strlcpy (fn_copy, file_name, PGSIZE);
+  args = palloc_get_page (0);
+  if (args == NULL)
+    return PID_ERROR;
+  strlcpy (args->cmd_line, cmd_line, sizeof(args->cmd_line));
+
+  /* initialize process info structure */
+  
+  if ((sema = malloc(sizeof(struct semaphore))) == NULL) {
+    goto fail1;
+  }
+  if ((pi = thread_current()->process_info) == NULL) {
+    new_pi = true;
+    if ((pi = process_info_allocate(NULL, NULL)) == NULL) {
+      goto fail1;
+    }
+  }
+  sema_init(sema, 0);
+  args->sema = sema;
+  args->parent_pi = pi;
 
   /* Create a new thread to execute FILE_NAME. */
-  tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
-  if (tid == TID_ERROR)
-    palloc_free_page (fn_copy); 
-  return tid;
+  tid = thread_create (cmd_line, PRI_DEFAULT, start_process, args);
+  if (tid == TID_ERROR) {
+    // palloc_free_page need only be done here, because palloc_free_page is called within the child routine
+    palloc_free_page(args); 
+    goto fail2;
+  }
+  
+  sema_down(sema);
+
+  bool create_success = false;
+  for (struct list_elem *e = list_begin(&pi->children_pi);
+    e != list_end(&pi->children_pi); e = list_next(e)) {
+      struct process_info *child_pi = list_entry(e, struct process_info, elem);
+      if (child_pi->thread->tid == tid) {
+        create_success = true;
+        /* even if process_info existed before, this doesn't matter */
+        thread_current()->process_info = pi;
+        /* no need to call palloc_free_page(args), because it is called by the child */
+        return child_pi->pid;
+      }
+  }
+
+  if (!create_success) {
+    goto fail2;
+  }
+
+fail2:
+  if (new_pi) {
+    process_info_release(pi);
+  }
+fail1:
+  return PID_ERROR;
 }
 
 /* A thread function that loads a user process and starts it
    running. */
 static void
-start_process (void *file_name_)
+start_process (void *args_)
 {
-  char *file_name = file_name_;
+  struct process_start_args *args = args_;
   struct intr_frame if_;
-  bool success;
+  bool success = false;
+  struct process_info *pi;
+
+  /* Initialize process_info structure */
+  if ((pi = process_info_allocate(args->sema, args->parent_pi)) == NULL) {
+    success = false;
+    goto done;
+  }
 
   /* Initialize interrupt frame and load executable. */
   memset (&if_, 0, sizeof if_);
   if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
-  success = load (file_name, &if_.eip, &if_.esp);
+  success = load ((const char *)args->cmd_line, pi, &if_.eip, &if_.esp);
 
+done:
   /* If load failed, quit. */
-  palloc_free_page (file_name);
-  if (!success) 
-    thread_exit ();
+  palloc_free_page (args);
+  if (!success) {
+    sema_up(pi->sema);
+    thread_exit();
+  }
+  thread_current()->process_info = pi;
+  list_push_back(&pi->parent_pi->children_pi, &pi->elem);
+  sema_up(pi->sema);
 
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
@@ -86,9 +230,39 @@ start_process (void *file_name_)
    This function will be implemented in problem 2-2.  For now, it
    does nothing. */
 int
-process_wait (tid_t child_tid UNUSED) 
+process_wait (pid_t child_pid) 
 {
-  return -1;
+  int return_value;
+  struct process_info *pi = thread_current()->process_info;
+  if (pi == NULL) {
+    return_value = -1;
+    goto done;
+  }
+  for (struct list_elem *e = list_begin(&pi->children_pi);
+    e != list_end(&pi->children_pi); e = list_next(e)) {
+      struct process_info *child_pi = list_entry(e, struct process_info, elem);
+      if (child_pi->pid == child_pid) {
+        switch (child_pi->status) {
+          case PROCESS_EXITED: {
+            break;
+          }
+          case PROCESS_RUNNING: {
+            sema_down(child_pi->sema);
+            break;
+          }
+          default: {
+            ASSERT(0);
+          }
+        }
+        return_value = child_pi->exit_code;
+        list_remove(&child_pi->elem);
+        process_info_release(child_pi);
+        goto done;
+      }
+  }
+return_value = -1;
+done:
+  return return_value;
 }
 
 /* Free the current process's resources. */
@@ -114,6 +288,25 @@ process_exit (void)
       pagedir_activate (NULL);
       pagedir_destroy (pd);
     }
+  if (cur->process_info) {
+    struct process_info *pi = cur->process_info;
+    /* if pi has children, set all of its parent_pi pointers to NULL */
+    // TODO: remove all child_pi from list children_pi
+    for (struct list_elem *e = list_begin(&pi->children_pi);
+      e != list_end(&pi->children_pi); e = list_next(e)) {
+        struct process_info *child_pi = list_entry(e, struct process_info, elem);
+        ASSERT(child_pi->parent_pi == pi);
+        child_pi->parent_pi = NULL;
+    }
+    /* if pi has a parent, set exit code, and sema up. If it does not, free the pi structure */
+    if (pi->parent_pi) {
+      pi->status = PROCESS_EXITED;
+      sema_up(pi->sema);
+    }
+    else {
+      process_info_release(pi);
+    }
+  }
 }
 
 /* Sets up the CPU for running user code in the current
@@ -206,10 +399,11 @@ static bool load_segment (struct file *file, off_t ofs, uint8_t *upage,
    and its initial stack pointer into *ESP.
    Returns true if successful, false otherwise. */
 bool
-load (const char *file_name, void (**eip) (void), void **esp) 
+load (const char *cmd_line, struct process_info *pi, void (**eip) (void), void **esp) 
 {
   struct thread *t = thread_current ();
   struct Elf32_Ehdr ehdr;
+  size_t file_name_len, cmd_line_len;
   struct file *file = NULL;
   off_t file_ofs;
   bool success = false;
@@ -221,11 +415,28 @@ load (const char *file_name, void (**eip) (void), void **esp)
     goto done;
   process_activate ();
 
+  file_name_len = strlen(cmd_line);
+  cmd_line_len = strlen(cmd_line);
+
+  for (int i = 0; i < cmd_line_len; i++) {
+    if (cmd_line[i] == ' ') {
+      file_name_len = i;
+      break;
+    }
+  }
+
+  if (file_name_len+1 >= sizeof(pi->file_name)) {
+    ASSERT(0);
+    goto done;
+  }
+
+  strlcpy(pi->file_name, cmd_line, file_name_len+1);
+
   /* Open executable file. */
-  file = filesys_open (file_name);
+  file = filesys_open (pi->file_name);
   if (file == NULL) 
     {
-      printf ("load: %s: open failed\n", file_name);
+      printf ("load: %s: open failed\n", pi->file_name);
       goto done; 
     }
 
@@ -238,7 +449,7 @@ load (const char *file_name, void (**eip) (void), void **esp)
       || ehdr.e_phentsize != sizeof (struct Elf32_Phdr)
       || ehdr.e_phnum > 1024) 
     {
-      printf ("load: %s: error loading executable\n", file_name);
+      printf ("load: %s: error loading executable\n", pi->file_name);
       goto done; 
     }
 
@@ -305,6 +516,34 @@ load (const char *file_name, void (**eip) (void), void **esp)
   if (!setup_stack (esp))
     goto done;
 
+  /* setup stack */
+  char *user_stack, *cmd_line_copy, *cursor;
+  size_t argc;
+  cmd_line_len = cmd_line_len % 4 == 0 ? cmd_line_len + 4 : cmd_line_len + 4 - (cmd_line_len%4);
+  user_stack = (char *)(*esp);
+  user_stack -= cmd_line_len;
+  cmd_line_copy = user_stack;
+  strlcpy(user_stack, cmd_line, cmd_line_len);
+
+  argc = 1;
+  cursor = cmd_line_copy;
+  while (*cursor) {
+    if (*cursor == ' '){
+      argc++;
+    }
+    cursor++;
+  }
+
+  user_stack -= (argc + 1) * sizeof(void *);
+  tokenize(cmd_line_copy, (char **)user_stack);
+  {
+    void **_user_stack = (void **)user_stack;
+    _user_stack[-1] = user_stack;
+    _user_stack[-2] = (void *)argc;
+    _user_stack[-3] = (void *)0xcafebebe;
+    *esp = &_user_stack[-3];
+  }
+
   /* Start address. */
   *eip = (void (*) (void)) ehdr.e_entry;
 
@@ -315,7 +554,7 @@ load (const char *file_name, void (**eip) (void), void **esp)
   file_close (file);
   return success;
 }
-
+
 /* load() helpers. */
 
 static bool install_page (void *upage, void *kpage, bool writable);

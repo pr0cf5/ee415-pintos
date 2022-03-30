@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include "threads/synch.h"
 #include "threads/fixed-point.h"
+#include "userprog/process.h"
 
 extern bool threading_started;
 
@@ -125,6 +126,7 @@ struct thread
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /* Page directory. */
+    struct process_info *process_info;
 #endif
 
     /* Owned by thread.c. */
