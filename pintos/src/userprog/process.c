@@ -8,6 +8,7 @@
 #include "userprog/gdt.h"
 #include "userprog/pagedir.h"
 #include "userprog/tss.h"
+#include "userprog/syscall.h"
 #include "filesys/directory.h"
 #include "filesys/file.h"
 #include "filesys/filesys.h"
@@ -17,6 +18,7 @@
 #include "threads/palloc.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
+#include "threads/malloc.h"
 
 static struct pid_allocator pid_allocator;
 /* used to prevent race between exec/wait/exit */
@@ -68,7 +70,11 @@ void pid_release(pid_t pid) {
   return;
 }
 
-
+/*
+  kernel threads that do not have a user process can have a process_info_allocate structure. 
+  The only possible way for this to happen is the main thread running the task.
+  Therefore, it is a waste of resource to initialize stdin and stdout here, but for coherency we just maintain it this way.
+*/
 struct process_info *process_info_allocate(struct semaphore *sema, struct process_info *parent_pi) {
   struct process_info *new;
   if ((new = malloc(sizeof(struct process_info))) == NULL) {
@@ -80,8 +86,12 @@ struct process_info *process_info_allocate(struct semaphore *sema, struct proces
   new->sema = sema;
   new->status = PROCESS_RUNNING;
   new->parent_pi = parent_pi;
+  new->is_critical = false;
   strlcpy(new->file_name, "process-default", sizeof(new->file_name));
   list_init(&new->children_pi);
+  list_init(&new->user_file_list);
+  init_stdin(new);
+  init_stdout(new);
   return new;
 }
 
@@ -99,8 +109,11 @@ void process_info_release(struct process_info *pi) {
   free(pi);
 }
 
-void
-process_init() {
+void process_info_set_exit_code(struct process_info *info, int exit_code) {
+  info->exit_code = exit_code;
+}
+
+void process_init() {
   lock_init(&pid_allocator.pid_lock);
   pid_allocator.last_pid = 1;
   lock_init(&process_lock);

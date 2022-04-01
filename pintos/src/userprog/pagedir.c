@@ -213,6 +213,18 @@ pagedir_set_accessed (uint32_t *pd, const void *vpage, bool accessed)
         }
     }
 }
+/* returns false if the user page is not writable OR does not exist */
+bool
+pagedir_is_writable(uint32_t *pd, const void *uaddr) {
+  uint32_t *pte;
+  ASSERT (is_user_vaddr (uaddr));
+  pte = lookup_page (pd, uaddr, false);
+  if (pte != NULL && (*pte & PTE_P) != 0)
+    return *pte & PTE_W;
+  else
+    return false;
+}
+
 
 /* Loads page directory PD into the CPU's page directory base
    register. */

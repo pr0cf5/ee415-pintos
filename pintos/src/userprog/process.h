@@ -33,6 +33,12 @@ struct process_info {
     struct process_info *parent_pi;
     struct list children_pi;
     struct list_elem elem;
+
+    /* related to memory access */
+    bool is_critical;
+
+    /* related to fd management */
+    struct list user_file_list;
 };
 
 struct process_start_args {
@@ -48,6 +54,7 @@ void pid_release(pid_t pid);
 
 struct process_info *process_info_allocate(struct semaphore *sema, struct process_info *parent_pi);
 void process_info_release(struct process_info *info);
+void process_info_set_exit_code(struct process_info *info, int exit_code);
 
 pid_t process_execute (const char *file_name);
 int process_wait (pid_t);
