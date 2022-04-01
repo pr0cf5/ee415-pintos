@@ -61,7 +61,7 @@ size_t copy_to_user(void *uaddr, void *kaddr, size_t length) {
     uint32_t _uaddr = (uint32_t)uaddr, first_pg, last_pg, iter_pg;
     critical_region_enter();
     /* integer overflow */
-    if (_uaddr + length <= _uaddr) {
+    if (_uaddr + length < _uaddr) {
         return_value = -1;
         goto done;
     }

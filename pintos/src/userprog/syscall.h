@@ -34,17 +34,23 @@ int fd_allocate(struct process_info *pi);
 int fd_release();
 bool init_stdin(struct process_info *pi);
 bool init_stdout(struct process_info *pi);
-bool append_dir(struct process_info *pi, struct dir *dir);
-bool append_file(struct process_info *pi, struct file *file);
-struct user_file *get_user_file(struct process_info *pi, int fd);
-bool remove_user_file(struct process_info *pi, int fd);
+bool append_dir(struct process_info *pi, struct dir *dir, int *fd);
+bool append_file(struct process_info *pi, struct file *file, int *fd);
+struct user_file *user_file_get(struct process_info *pi, int fd);
+bool user_file_remove(struct process_info *pi, int fd);
 
 void syscall_init (void);
+int sys_create(const char *file_name, size_t initial_size);
+int sys_remove(const char *file_name);
+int sys_open(const char *file_name);
 int sys_write(int fd, void *data, unsigned data_len);
 int sys_read(int fd, void *data, unsigned int data_len);
+int sys_seek(int fd, unsigned position);
+int sys_tell(int fd);
+int sys_filesize(int fd);
 int sys_exec(const char *cmd_line);
 int sys_wait(pid_t pid);
-
+void sys_exit(int exit_code);
 
 
 #endif /* userprog/syscall.h */

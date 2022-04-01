@@ -5,6 +5,7 @@
 #include "threads/interrupt.h"
 #include "threads/thread.h"
 #include "userprog/process.h"
+#include "userprog/syscall.h"
 
 /* Number of page faults processed. */
 static long long page_fault_cnt;
@@ -154,8 +155,7 @@ page_fault (struct intr_frame *f)
      which fault_addr refers. */
    if (user) {
       /* for now, just kill the process */
-      process_info_set_exit_code(thread_current()->process_info, -1);
-      thread_exit();
+      sys_exit(-1);
    }
    else {
       printf ("Page fault at %p: %s error %s page in %s context.\n",

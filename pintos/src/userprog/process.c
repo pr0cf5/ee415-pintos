@@ -31,7 +31,7 @@ static bool load (const char *cmdline, struct process_info *pi, void (**eip) (vo
   the caller of this function must enusre that argc has at least argc + 1 available
 */
 static void
-tokenize (char *input, char **argv) {
+tokenize (char *input, char **argv, int *argc) {
 
   char *next_ptr, *cursor, *end_ptr;
   int i = 0;
@@ -56,6 +56,7 @@ tokenize (char *input, char **argv) {
   }
 
   argv[i] = NULL;
+  *argc = i;
 }
 
 pid_t pid_allocate() {
@@ -548,7 +549,7 @@ load (const char *cmd_line, struct process_info *pi, void (**eip) (void), void *
   }
 
   user_stack -= (argc + 1) * sizeof(void *);
-  tokenize(cmd_line_copy, (char **)user_stack);
+  tokenize(cmd_line_copy, (char **)user_stack, &argc);
   {
     void **_user_stack = (void **)user_stack;
     _user_stack[-1] = user_stack;
