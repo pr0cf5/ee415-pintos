@@ -39,12 +39,16 @@ struct process_info {
 
     /* related to fd management */
     struct list user_file_list;
+
+    /* used for synch */
+    struct lock lock;
 };
 
 struct process_start_args {
     char cmd_line[0x800];
     struct semaphore *sema;
     struct process_info *parent_pi;
+    struct process_info **out_pi;
 };
 
 void process_init();

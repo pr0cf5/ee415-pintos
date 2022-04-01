@@ -99,12 +99,18 @@ struct process_info *process_info_allocate(struct semaphore *sema, struct proces
 void process_info_release(struct process_info *pi) {
   if (pi->sema) {
     free(pi->sema);
+    pi->sema = NULL;
   }
   pid_release(pi->pid);
   for (struct list_elem *e = list_begin(&pi->children_pi);
     e != list_end(&pi->children_pi); e = list_next(e)) {
       struct process_info *child_pi = list_entry(e, struct process_info, elem);
-      ASSERT(child_pi->parent_pi == pi);
+      /*
+        Assume the following: A --> B --> C
+        Then when A waits for B, process_info_release(B) will be called.
+        However, if B exited from process_exit, C->parent will be set to NULL. 
+      */
+      //ASSERT(child_pi->parent_pi == pi);
       child_pi->parent_pi = NULL;
   }
   free(pi);
@@ -152,8 +158,10 @@ process_execute (const char *cmd_line)
     }
   }
   sema_init(sema, 0);
+  struct process_info *child_pi;
   args->sema = sema;
   args->parent_pi = pi;
+  args->out_pi = &child_pi;
 
   /* Create a new thread to execute FILE_NAME. */
   tid = thread_create (cmd_line, PRI_DEFAULT, start_process, args);
@@ -164,18 +172,13 @@ process_execute (const char *cmd_line)
   }
   
   sema_down(sema);
-
   bool create_success = false;
-  for (struct list_elem *e = list_begin(&pi->children_pi);
-    e != list_end(&pi->children_pi); e = list_next(e)) {
-      struct process_info *child_pi = list_entry(e, struct process_info, elem);
-      if (child_pi->thread->tid == tid) {
-        create_success = true;
-        /* even if process_info existed before, this doesn't matter */
-        thread_current()->process_info = pi;
-        /* no need to call palloc_free_page(args), because it is called by the child */
-        return child_pi->pid;
-      }
+  if (child_pi != NULL) {
+    create_success = true;
+    /* even if process_info existed before, this doesn't matter */
+    thread_current()->process_info = pi;
+    /* no need to call palloc_free_page(args), because it is called by the child */
+    return child_pi->pid;
   }
 
   if (!create_success) {
@@ -199,6 +202,7 @@ start_process (void *args_)
   struct intr_frame if_;
   bool success = false;
   struct process_info *pi;
+  struct process_info **out_pi;
 
   /* Initialize process_info structure */
   if ((pi = process_info_allocate(args->sema, args->parent_pi)) == NULL) {
@@ -215,13 +219,21 @@ start_process (void *args_)
 
 done:
   /* If load failed, quit. */
+  out_pi = args->out_pi;
   palloc_free_page (args);
   if (!success) {
+    /* 
+      a very special case, where sema must not be freed until sema_up, 
+      even though pi must be freed
+    */
+    *out_pi = NULL;
     sema_up(pi->sema);
+    process_info_release(pi);
     thread_exit();
   }
   thread_current()->process_info = pi;
   list_push_back(&pi->parent_pi->children_pi, &pi->elem);
+  *out_pi = pi;
   sema_up(pi->sema);
 
   /* Start the user process by simulating a return from an
@@ -256,18 +268,8 @@ process_wait (pid_t child_pid)
     e != list_end(&pi->children_pi); e = list_next(e)) {
       struct process_info *child_pi = list_entry(e, struct process_info, elem);
       if (child_pi->pid == child_pid) {
-        switch (child_pi->status) {
-          case PROCESS_EXITED: {
-            break;
-          }
-          case PROCESS_RUNNING: {
-            sema_down(child_pi->sema);
-            break;
-          }
-          default: {
-            ASSERT(0);
-          }
-        }
+        sema_down(child_pi->sema);
+        ASSERT(child_pi->status == PROCESS_EXITED);
         return_value = child_pi->exit_code;
         list_remove(&child_pi->elem);
         process_info_release(child_pi);
@@ -318,7 +320,12 @@ process_exit (void)
       sema_up(pi->sema);
     }
     else {
+      /*
+        actually, this part is only reachable once, 
+        because process_exit would have to be called on the main thread 
+      */
       process_info_release(pi);
+      thread_current()->process_info = NULL;
     }
   }
 }
