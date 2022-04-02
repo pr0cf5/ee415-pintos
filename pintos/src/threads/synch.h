@@ -4,6 +4,8 @@
 #include <list.h>
 #include <stdbool.h>
 
+extern bool sema_yield;
+
 /* A counting semaphore. */
 struct semaphore 
   {

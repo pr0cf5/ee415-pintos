@@ -491,6 +491,39 @@ sys_wait(pid_t pid) {
   return process_wait(pid);
 }
 
+int sys_sendsig(pid_t pid, int signum) {
+  struct process_info *pi = get_process_info(pid);
+  struct pending_signal *ps = pending_signal_allocate(signum);
+  if (pi == NULL || ps == NULL) {
+    return -1;
+  }
+  lock_acquire(&pi->pending_signals_lock);
+  list_push_back(&pi->pending_signals, &ps->elem);
+  lock_release(&pi->pending_signals_lock);
+  return 0;
+}
+
+int sys_sigaction(int signum, void *handler) {
+  struct signal_handler_info *shi;
+  struct process_info *pi = thread_current()->process_info;
+  if ((shi = get_signal_handler_info(pi, signum)) != NULL) {
+    shi->handler = handler;
+  }
+  else {
+    shi = signal_handler_info_allocate(signum, handler);
+    if (shi == NULL) {
+      return -1;
+    }
+    list_push_back(&pi->signal_handler_infos, &shi->elem);
+  }
+  return 0;
+}
+     
+int sys_yield() {
+  thread_yield();
+  return 0;
+}
+
 void sys_exit(int exit_code) {
   struct process_info *pi = thread_current()->process_info;
   pi->exit_code = exit_code;
@@ -498,7 +531,7 @@ void sys_exit(int exit_code) {
   thread_exit();
 }
 
-void
+static void
 syscall_handler (struct intr_frame *f) 
 {
   struct syscall_arguments *args = f->esp;
@@ -557,6 +590,18 @@ syscall_handler (struct intr_frame *f)
     }
     case SYS_WAIT: {
       f->eax = sys_wait((pid_t)args->syscall_args[0]);
+      break;
+    }
+    case SYS_SIGACTION: {
+      f->eax = sys_sigaction((int)args->syscall_args[0], (void *)args->syscall_args[1]);
+      break;
+    }
+    case SYS_SENDSIG: {
+      f->eax = sys_sendsig((pid_t)args->syscall_args[0], (int)args->syscall_args[1]);
+      break;
+    }
+    case SYS_YIELD: {
+      f->eax = sys_yield();
       break;
     }
     default: {

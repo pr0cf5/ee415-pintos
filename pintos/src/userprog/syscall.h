@@ -53,6 +53,9 @@ int sys_tell(int fd);
 int sys_filesize(int fd);
 int sys_exec(const char *cmd_line);
 int sys_wait(pid_t pid);
+int sys_sendsig(pid_t pid, int signum);
+int sys_sigaction(int signum, void *handler);
+int sys_yield();
 void sys_exit(int exit_code);
 
 

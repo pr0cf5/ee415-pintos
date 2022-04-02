@@ -19,6 +19,7 @@
 #include "threads/thread.h"
 #include "threads/vaddr.h"
 #include "threads/malloc.h"
+#include "threads/synch.h"
 
 static struct pid_allocator pid_allocator;
 /* used to prevent race between exec/wait/exit */
@@ -59,6 +60,51 @@ tokenize (char *input, char **argv, int *argc) {
   *argc = i;
 }
 
+struct signal_handler_info *signal_handler_info_allocate(int signum, void *handler) {
+  struct signal_handler_info *shi = malloc(sizeof(struct pending_signal));
+  if (shi == NULL) {
+    return NULL;
+  }
+  shi->signum = signum;
+  shi->handler = handler;
+  return shi;
+}
+
+void signal_handler_info_release(struct signal_handler_info * shi) {
+  free(shi);
+}
+
+struct signal_handler_info *get_signal_handler_info(struct process_info *pi, int signum) {
+  for (struct list_elem *e = list_begin(&pi->signal_handler_infos);
+    e != list_end(&pi->signal_handler_infos); e = list_next(e)) {
+      struct signal_handler_info *shi = list_entry(e, struct signal_handler_info, elem);
+      if (shi->signum == signum) {
+        return shi;
+      }
+  }
+  return NULL;
+}
+
+struct pending_signal *pending_signal_allocate(int signum) {
+  struct pending_signal *ps = malloc(sizeof(struct pending_signal));
+  if (ps == NULL) {
+    return NULL;
+  }
+  ps->signum = signum;
+  return ps;
+}
+
+void pending_signal_release(struct pending_signal *ps) {
+  free(ps);
+}
+
+void pending_signal_handle(struct process_info *pi, struct pending_signal *ps) {
+  struct signal_handler_info *shi = get_signal_handler_info(pi, ps->signum);
+  if (shi != NULL) {
+    printf("Signum: %d, Action: %p\n", shi->signum, shi->handler);
+  }
+}
+
 pid_t pid_allocate() {
   pid_t pid;
   lock_acquire(&pid_allocator.pid_lock);
@@ -69,6 +115,18 @@ pid_t pid_allocate() {
 
 void pid_release(pid_t pid) {
   return;
+}
+
+struct process_info *get_process_info(pid_t pid) {
+  struct process_info *pi = thread_current()->process_info;
+  for (struct list_elem *e = list_begin(&pi->children_pi);
+    e != list_end(&pi->children_pi); e = list_next(e)) {
+      struct process_info *child_pi = list_entry(e, struct process_info, elem);
+      if (child_pi->pid == pid) {
+        return child_pi;
+      }
+    }
+  return NULL;
 }
 
 /*
@@ -92,6 +150,9 @@ struct process_info *process_info_allocate(struct semaphore *sema, struct proces
   strlcpy(new->file_name, "process-default", sizeof(new->file_name));
   list_init(&new->children_pi);
   list_init(&new->user_file_list);
+  list_init(&new->signal_handler_infos);
+  list_init(&new->pending_signals);
+  lock_init(&new->pending_signals_lock);
   init_stdin(new);
   init_stdout(new);
   return new;
@@ -328,6 +389,34 @@ process_exit (void)
       }
     }
 
+    /* free all pending_signals */
+    {
+      lock_acquire(&pi->pending_signals_lock);
+      struct list_elem *cur, *next;
+      cur = list_begin(&pi->pending_signals);
+      while(cur != list_end(&pi->pending_signals)) {
+        next = list_next(cur);
+        struct pending_signal *ps = list_entry(cur, struct pending_signal, elem);
+        list_remove(&ps->elem);
+        pending_signal_release(ps);
+        cur = next;
+      }
+      lock_release(&pi->pending_signals_lock);
+    }
+
+    /* free all signal_handler_infos */
+    {
+      struct list_elem *cur, *next;
+      cur = list_begin(&pi->signal_handler_infos);
+      while(cur != list_end(&pi->signal_handler_infos)) {
+        next = list_next(cur);
+        struct signal_handler_info *shi = list_entry(cur, struct signal_handler_info, elem);
+        list_remove(&shi->elem);
+        signal_handler_info_release(shi);
+        cur = next;
+      }
+    }
+
     /* allow writes to executables by closing exe_file */
     if (pi->exe_file) {
       file_close(pi->exe_file);
@@ -336,6 +425,7 @@ process_exit (void)
     /* if pi has a parent, set exit code, and sema up. If it does not, free the pi structure */
     if (pi->parent_pi) {
       pi->status = PROCESS_EXITED;
+      thread_current()->process_info = NULL;
       sema_up(pi->sema);
     }
     else {
@@ -360,11 +450,30 @@ process_activate (void)
   /* Activate thread's page tables. */
   pagedir_activate (t->pagedir);
 
+  /* handle pending signals */
+  bool old_sema_yield = sema_yield;
+  sema_yield = false;
+  struct list_elem *cur, *next;
+  struct process_info *pi = thread_current()->process_info;
+  if (pi != NULL) {
+    // this function is called within an interrupt handler, so no synchronization primitives
+    cur = list_begin(&pi->pending_signals);
+    while(cur != list_end(&pi->pending_signals)) {
+      next = list_next(cur);
+      struct pending_signal *ps = list_entry(cur, struct pending_signal, elem);
+      pending_signal_handle(pi, ps);
+      list_remove(&ps->elem);
+      pending_signal_release(ps);
+      cur = next;
+    }
+  }
+  sema_yield = old_sema_yield;
+
   /* Set thread's kernel stack for use in processing
      interrupts. */
   tss_update ();
 }
-
+
 /* We load ELF binaries.  The following definitions are taken
    from the ELF specification, [ELF1], more-or-less verbatim.  */
 
