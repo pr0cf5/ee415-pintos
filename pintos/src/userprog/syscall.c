@@ -12,7 +12,7 @@
 #include "filesys/filesys.h"
 #include "devices/input.h"
 
-static struct lock filesys_lock;
+struct lock filesys_lock;
 
 static void syscall_handler (struct intr_frame *);
 
@@ -92,6 +92,11 @@ bool user_file_remove(struct process_info *pi, int fd) {
     return false;
   }
   list_remove(&f->elem);
+  if (f->type == UserFileFile || f->type == UserFileDir) {
+    lock_acquire(&filesys_lock);
+    file_close(f->inner.file);
+    lock_release(&filesys_lock);
+  }
   free(f);
 }
 
@@ -158,18 +163,19 @@ sys_open(const char *file_name) {
     goto done_nocopy;
   }
   lock_acquire(&filesys_lock);
-  if ((file = filesys_open(file_name)) == NULL) {
+  file = filesys_open(file_name);
+  lock_release(&filesys_lock);
+  if (file == NULL) {
     return_value = -1;
     goto done;
   }
+  
   if (!append_file(thread_current()->process_info, file, &fd)) {
     return_value = -1;
     goto done;
   }
   return_value = fd;
 done:
-  lock_release(&filesys_lock);
-done_nolock:
   free(copy);
 done_nocopy:
   return return_value;
@@ -179,7 +185,6 @@ int
 sys_close(int fd) {
   int return_value;
   struct user_file *file;
-  lock_acquire(&filesys_lock);
   if ((file = user_file_get(thread_current()->process_info, fd)) == NULL) {
     return_value = -1;
     goto done;
@@ -198,14 +203,12 @@ sys_close(int fd) {
     goto done;
   } 
 done:
-  lock_release(&filesys_lock);
-done_nolock:
   return return_value;
 }
 
 int
 sys_create(const char *file_name, size_t initial_size) {
-  bool fault;
+  bool fault, success;
   int return_value, fd;
   struct file *file;
   char *copy = strdup_user(file_name, &fault);
@@ -217,7 +220,9 @@ sys_create(const char *file_name, size_t initial_size) {
     goto done_nocopy;
   }
   lock_acquire(&filesys_lock);
-  if (!filesys_create(file_name, initial_size)) {
+  success = filesys_create(file_name, initial_size);
+  lock_release(&filesys_lock);
+  if (!success) {
     return_value = 0;
     goto done;
   }
@@ -227,8 +232,6 @@ sys_create(const char *file_name, size_t initial_size) {
   }
   return_value = 1;
 done:
-  lock_release(&filesys_lock);
-done_nolock:
   free(copy);
 done_nocopy:
   return return_value;
@@ -236,7 +239,7 @@ done_nocopy:
 
 int
 sys_remove(const char *file_name) {
-  bool fault;
+  bool fault, success;
   int return_value;
   struct file *file;
   char *copy = strdup_user(file_name, &fault);
@@ -248,14 +251,14 @@ sys_remove(const char *file_name) {
     goto done_nocopy;
   }
   lock_acquire(&filesys_lock);
-  if (!filesys_remove(file_name)) {
+  success = filesys_remove(file_name);
+  lock_release(&filesys_lock);
+  if (!success) {
     return_value = 0;
     goto done;
   }
   return_value = 1;
 done:
-  lock_release(&filesys_lock);
-done_nolock:
   free(copy);
 done_nocopy:
   return return_value;
@@ -273,16 +276,18 @@ sys_read(int fd, void *data, unsigned data_len) {
     return_value = -1;
     goto done_nocopy;
   }
-  lock_acquire (&filesys_lock);
   struct user_file *f = user_file_get(thread_current()->process_info, fd);
   if (f == NULL || f->type == UserFileDir) {
+    return_value = -1;
     goto done;
   }
   switch (f->type) {
     case UserFileStdin: {
+      lock_acquire(&filesys_lock);
       for (int i = 0; i < data_len; i++) {
         copy[i] = input_getc();
       }
+      lock_release(&filesys_lock);
       return_value = data_len;
       goto done;
     }
@@ -291,7 +296,9 @@ sys_read(int fd, void *data, unsigned data_len) {
       goto done;
     }
     case UserFileFile: {
+      lock_acquire(&filesys_lock);
       return_value = file_read(f->inner.file, copy, data_len);
+      lock_release(&filesys_lock);
       if (return_value == -1) {
         goto done;
       }
@@ -314,8 +321,6 @@ sys_read(int fd, void *data, unsigned data_len) {
   }
 
 done:
-  lock_release(&filesys_lock);
-done_nolock:
   free(copy);
 done_nocopy:
   return return_value;
@@ -337,14 +342,15 @@ sys_write (int fd, void *data, unsigned data_len) {
     sys_exit(-1);
   }
 
-  lock_acquire (&filesys_lock);
   struct user_file *f = user_file_get(thread_current()->process_info, fd);
   if (f == NULL || f->type == UserFileDir) {
     goto done;
   }
   switch (f->type) {
     case UserFileStdout: {
+      lock_acquire(&filesys_lock);
       putbuf (copy, data_len);
+      lock_release(&filesys_lock);
       return_value = data_len;
       goto done;
       break;
@@ -355,7 +361,9 @@ sys_write (int fd, void *data, unsigned data_len) {
       break;
     }
     case UserFileFile: {
+      lock_acquire(&filesys_lock);
       return_value = file_write(f->inner.file, copy, data_len);
+      lock_release(&filesys_lock);
       goto done;
       break;
     }
@@ -369,8 +377,6 @@ sys_write (int fd, void *data, unsigned data_len) {
     }
   }
 done:
-  lock_release(&filesys_lock);
-done_nolock:
   free(copy);
 done_nocopy:
   return return_value;
@@ -380,13 +386,14 @@ int
 sys_seek(int fd, unsigned position) {
   int return_value;
   struct user_file *file;
-  lock_acquire(&filesys_lock);
   if ((file = user_file_get(thread_current()->process_info, fd)) == NULL) {
     return_value = -1;
     goto done;
   }
   if (file->type == UserFileFile) {
+    lock_acquire(&filesys_lock);
     file_seek(file->inner.file, position);
+    lock_release(&filesys_lock);
     return_value = 0;
     goto done;
   }
@@ -395,8 +402,6 @@ sys_seek(int fd, unsigned position) {
     goto done;
   } 
 done:
-  lock_release(&filesys_lock);
-done_nolock:
   return return_value;
 }
 
@@ -404,13 +409,15 @@ int
 sys_tell(int fd) {
   int return_value;
   struct user_file *file;
-  lock_acquire(&filesys_lock);
+  
   if ((file = user_file_get(thread_current()->process_info, fd)) == NULL) {
     return_value = -1;
     goto done;
   }
   if (file->type == UserFileFile) {
+    lock_acquire(&filesys_lock);
     return_value = file_tell(file->inner.file);
+    lock_release(&filesys_lock);
     goto done;
 
   }
@@ -419,8 +426,6 @@ sys_tell(int fd) {
     goto done;
   } 
 done:
-  lock_release(&filesys_lock);
-done_nolock:
   return return_value;
 }
 
@@ -428,13 +433,15 @@ int
 sys_filesize(int fd) {
   int return_value;
   struct user_file *file;
-  lock_acquire(&filesys_lock);
+  
   if ((file = user_file_get(thread_current()->process_info, fd)) == NULL) {
     return_value = -1;
     goto done;
   }
   if (file->type == UserFileFile) {
+    lock_acquire(&filesys_lock);
     return_value = file_length(file->inner.file);
+    lock_release(&filesys_lock);
     goto done;
 
   }
@@ -443,8 +450,6 @@ sys_filesize(int fd) {
     goto done;
   } 
 done:
-  lock_release(&filesys_lock);
-done_nolock:
   return return_value;
 }
 
