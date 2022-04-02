@@ -234,17 +234,15 @@ process_execute (const char *cmd_line)
   }
   
   sema_down(sema);
-  bool create_success = false;
   if (child_pi != NULL) {
-    create_success = true;
     /* even if process_info existed before, this doesn't matter */
     thread_current()->process_info = pi;
     /* no need to call palloc_free_page(args), because it is called by the child */
     return child_pi->pid;
   }
-
-  if (!create_success) {
-    goto fail2;
+  else {
+    // child does not free sema
+    free(sema);
   }
 
 fail2:
@@ -286,12 +284,15 @@ done:
   if (!success) {
     /* 
       a very special case, where sema must not be freed until sema_up, 
-      even though pi must be freed
+      even though pi must be freed.
+      sema is set to NULL and not freed in process_info_release, because if it is freed, 
+      sema_down will operate on a freed semaphore, causing UaF. The seamphore must be freed by the parent.
     */
     *out_pi = NULL;
     sema_up(pi->sema);
+    pi->sema = NULL;
     process_info_release(pi);
-    thread_exit();
+    thread_exit();    
   }
   thread_current()->process_info = pi;
   list_push_back(&pi->parent_pi->children_pi, &pi->elem);

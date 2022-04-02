@@ -10,5 +10,5 @@ pintos -v -k --qemu --filesys-size=2 \
 -p tests/userprog/sig-simple -a sig-simple \
 -p tests/userprog/child-sig -a child-sig \
 -p ../../tests/userprog/sample.txt -a sample.txt \
--- -q  -f run sig-simple
+-- -q  -f run exec-missing
 
