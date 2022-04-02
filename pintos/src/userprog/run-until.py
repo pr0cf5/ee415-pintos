@@ -18,14 +18,14 @@ if __name__ == "__main__":
     
     error_log = b""
     pass_cnt = 0
-    exec_cnt = 100
+    exec_cnt = 1000
 
     for i in range(exec_cnt):
         out = check_output(cmdline, shell=True)
         if verify(out):
             pass_cnt += 1
         else:
-            print("fuck")
+            print("problem detected")
             error_log += b"="*30 + b"\n"
             error_log += out
             error_log += b"="*30 + b"\n"

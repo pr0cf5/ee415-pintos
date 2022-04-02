@@ -314,6 +314,19 @@ process_exit (void)
         ASSERT(child_pi->parent_pi == pi);
         child_pi->parent_pi = NULL;
     }
+    /* free all user_file objects */
+    {
+      struct list_elem *cur, *next;
+      cur = list_begin(&pi->user_file_list);
+      while(cur != list_end(&pi->user_file_list)) {
+        next = list_next(cur);
+        struct user_file *uf = list_entry(cur, struct user_file, elem);
+        list_remove(&uf->elem);
+        user_file_release(uf);
+        cur = next;
+      }
+    }
+    
     /* if pi has a parent, set exit code, and sema up. If it does not, free the pi structure */
     if (pi->parent_pi) {
       pi->status = PROCESS_EXITED;

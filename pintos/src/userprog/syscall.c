@@ -10,6 +10,7 @@
 #include "userprog/usermem.h"
 #include "filesys/file.h"
 #include "filesys/filesys.h"
+#include "filesys/directory.h"
 #include "devices/input.h"
 
 struct lock filesys_lock;
@@ -115,6 +116,22 @@ int fd_allocate(struct process_info *pi) {
   }
   return new_fd;
 }
+
+void user_file_release(struct user_file *uf) {
+  switch (uf->type) {
+    case UserFileDir: {
+      dir_close(uf->inner.file);
+    }
+    case UserFileFile: {
+      file_close(uf->inner.file);
+    }
+    default: {
+      break;
+    }
+  }
+  free(uf);
+}
+
 
 static char *strdup_user(const char *user_string, bool *fault) {
   size_t length = 0;

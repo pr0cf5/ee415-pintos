@@ -39,6 +39,7 @@ bool init_stdout(struct process_info *pi);
 bool append_dir(struct process_info *pi, struct dir *dir, int *fd);
 bool append_file(struct process_info *pi, struct file *file, int *fd);
 struct user_file *user_file_get(struct process_info *pi, int fd);
+void user_file_release(struct user_file *uf);
 bool user_file_remove(struct process_info *pi, int fd);
 
 void syscall_init (void);
