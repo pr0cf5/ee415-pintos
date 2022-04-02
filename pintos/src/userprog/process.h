@@ -42,6 +42,9 @@ struct process_info {
 
     /* used for synch */
     struct lock lock;
+
+    /* used for denying writes to executables */
+    struct file *exe_file;
 };
 
 struct process_start_args {
