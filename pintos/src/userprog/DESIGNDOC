@@ -8,9 +8,7 @@
 
 >> Fill in the names and email addresses of your group members.
 
-FirstName LastName <email@domain.example>
-FirstName LastName <email@domain.example>
-FirstName LastName <email@domain.example>
+Woosun Song wireless@kaist.ac.kr
 
 ---- PRELIMINARIES ----
 
@@ -30,19 +28,30 @@ FirstName LastName <email@domain.example>
 >> `struct' member, global or static variable, `typedef', or
 >> enumeration.  Identify the purpose of each in 25 words or less.
 
+There are no additional global data structures that I implemented for argument parsing.
+
 ---- ALGORITHMS ----
 
 >> A2: Briefly describe how you implemented argument parsing.  How do
 >> you arrange for the elements of argv[] to be in the right order?
 >> How do you avoid overflowing the stack page?
 
+First, the maximum length of argv is calculated by calculating the number of spaces in the command line. Next, the stack is lifted by 4 * argc + align4(strlen(command_line)) bytes. Next, the command line is copied on the stack. Finally, using the tokenization function, the argv char ** array is set. 
+
+The order of elements in argv is guaranteed by the semantics of the tokenization function. Overflowing the stack page is prevented by setting a hardocded limit on the maximum number of argc. If that limit is exceeded, executing the command line fails.
+
 ---- RATIONALE ----
 
 >> A3: Why does Pintos implement strtok_r() but not strtok()?
+strtok has equivalent semantics with strtok_r only if it is used by one thread. strtok internally has a global variable that serves as the save_ptr argument for strtok_r. If we use strtok in multiple threads, that global variable will be overwritten and the semantic correctness as well as memory safety can be damaged.
 
 >> A4: In Pintos, the kernel separates commands into a executable name
 >> and arguments.  In Unix-like systems, the shell does this
 >> separation.  Identify at least two advantages of the Unix approach.
+
+First, in the PintOS approach, it is impossible for elements in argv[] to contain spaces, for they are delimiters. However, in the UNIX approach it is possible for elements in argv[] to contain spaces.
+
+Second, the UNIX approach can help reduce overhead, because it doesn't use kernel memory. When using kernel memory, there is a higher chance of the kernel memory allocator blocking. However, when doing the entire work in userspace this is not a concern.
 
                  SYSTEM CALLS
                  ============
@@ -52,6 +61,74 @@ FirstName LastName <email@domain.example>
 >> B1: Copy here the declaration of each new or changed `struct' or
 >> `struct' member, global or static variable, `typedef', or
 >> enumeration.  Identify the purpose of each in 25 words or less.
+
+The first structure implemented is the process_info structure.
+```
+enum process_status {
+    PROCESS_RUNNING,
+    PROCESS_EXITED,
+};
+
+struct process_info {
+    pid_t pid;
+    char file_name[20];
+    struct thread *thread;
+
+    /* warning: this is only used in child side. this is because parents can have multiple children */
+    struct semaphore *sema;
+
+    /* used for wait */
+    enum process_status status;
+    int exit_code;
+    
+    /* used to create tree */
+    struct process_info *parent_pi;
+    struct list children_pi;
+    struct list_elem elem;
+
+    /* related to memory access */
+    bool is_critical;
+
+    /* related to fd management */
+    struct list user_file_list;
+
+    /* used for synch */
+    struct lock lock;
+
+    /* used for denying writes to executables */
+    struct file *exe_file;
+
+    /* used for handling signals */
+    struct list signal_handler_infos;
+    struct lock pending_signals_lock;
+    struct list pending_signals;
+};
+```
+
+The second structure implemented is the user_file structure. It represents a file descriptor for a process.
+```
+enum UserFileType {
+    UserFileStdin,
+    UserFileStdout,
+    UserFileFile,
+    UserFileDir,
+};
+
+struct user_file {
+    int fd;
+    enum UserFileType type;
+    union {
+        struct file *file;
+        struct dir *dir;
+    } inner;
+    struct list_elem elem;
+};
+```
+
+Also, a global lock that locks all filesystem related operations is implemented.
+```
+struct lock filesys_lock;
+```
 
 >> B2: Describe how file descriptors are associated with open files.
 >> Are file descriptors unique within the entire OS or just within a
@@ -64,6 +141,8 @@ File descriptors are integer indexes that are mapped to kernel data structures r
 >> B3: Describe your code for reading and writing user data from the
 >> kernel.
 
+When reading or writing from user pointers in the kernel, I enforced the usage of `copy_from_user` and `copy_to_user`. In this function, it sets a flag in the current process_info structure which indicates that a page fault can occur. Also, within `copy_from_user` and `copy_to_user` the pointer is validated via `access_ok`, which checks if the pointer is not a kernel pointer, and it exists in the page table.
+
 >> B4: Suppose a system call causes a full page (4,096 bytes) of data
 >> to be copied from user space into the kernel.  What is the least
 >> and the greatest possible number of inspections of the page table
@@ -71,8 +150,12 @@ File descriptors are integer indexes that are mapped to kernel data structures r
 >> for a system call that only copies 2 bytes of data?  Is there room
 >> for improvement in these numbers, and how much?
 
+The least number of inspections is 1. It occurs when 4096 bytes are within a single page. The greatest number of inspections is 2. It occurs when 4096 bytes are spanned across 2 pages. For a system call that copies 2  bytes of data, the least number of inspections is 1 and the greatest number of inspections is 2, for the same reason. Improvement can be done by caching the results of the page table lookup in another data structure. With a good optimization strategy, access to pagedir_get_page can be reduced to 0.
+
 >> B5: Briefly describe your implementation of the "wait" system call
 >> and how it interacts with process termination.
+
+First, it checks if the process has a child process that has the pid given as argument. If it does not, return -1. If it does, fetch the pointer to the corresponding process_info structure. Afterwards, it calls `sema_down` on the semaphore in the process_info structure. 
 
 >> B6: Any access to user program memory at a user-specified address
 >> can fail due to a bad pointer value.  Such accesses must cause the
@@ -88,12 +171,16 @@ File descriptors are integer indexes that are mapped to kernel data structures r
 >> paragraphs, describe the strategy or strategies you adopted for
 >> managing these issues.  Give an example.
 
+Error handling can be done robustly using goto statements. By placing all deallocation code at the epilog of a function, and placing a label on it, we can ensure that all returns caused by erroneous behavior frees resources correctly. When a function allocates multiple resources, there must be multiple epilog labels, because the function can fail at a point where a certain resource is not allocated yet, and freeing unallocated resources can cause the function to crash. For example, assume a system call calls `lock_acquire` on a lock and calls malloc to allocate user provided amounts of memory. Afterwards, it copies from a user provided pointer to that allocated memory. In this case, there are 2 orthogonal points of code that can cause an error. (The first is when malloc returns NULL, and the second is when copying from user provided pointers fail) On the first error, the function has only 1 resource to release: the lock. But in the second error, the function needs to release the malloc'ed memory as well as the lock. 
+
 ---- SYNCHRONIZATION ----
 
 >> B7: The "exec" system call returns -1 if loading the new executable
 >> fails, so it cannot return before the new executable has completed
 >> loading.  How does your code ensure this?  How is the load
 >> success/failure status passed back to the thread that calls "exec"?
+
+I use a semaphore that is shared between the child process and the parent process. If the child process fails or succeeds in the process of exec, it increments the semaphore. Therefore, the parent can wait until child's state is determined. The load/success failure status is passed through a heap-based structure called process_info.
 
 Whenever a parent process spawns a new process, 
 
@@ -104,16 +191,26 @@ Whenever a parent process spawns a new process,
 >> terminates without waiting, before C exits?  After C exits?  Are
 >> there any special cases?
 
+Similarly, this is done using a semaphore. A child process increments a sempahore on thread_exit. Therefore, a parent is forced to wait until the child exits before processing the child in the wait system calls. if wait is called after C exits, the semaphore's value is set to 1, so the parent processes the child without waiting. I ensure that all resources are freed by making the parent take care of all resource deallocations in wait. If P exits before C does, C recognizes that it does not have a running parent through its parent pointer in the process_info structure, and de-allocates its resources by itself. 
+
 ---- RATIONALE ----
 
 >> B9: Why did you choose to implement access to user memory from the
 >> kernel in the way that you did?
 
+I used this method in order to simplify design in project 3. In project 3, lazy loading and demand paging is present, so even if the user pointer does not exists in the page table, it might be 'valid' Therefore, by allowing page faults to occur in a certain region of code, I can simplify the implementation of page fault handler in project 3.
+
 >> B10: What advantages or disadvantages can you see to your design
 >> for file descriptors?
 
+An advantage of file descriptor implementation that I have taken is organization. Since I have encapsulated stdout and stdin in the user_file structure, the code implementation for them has the same form as regular files and directories, which warrants simplicity.
+
+A disadvantage of this is that it is a waste of memory, since stdout and stdin does not use certain fields in the user_file structure.
+
 >> B11: The default tid_t to pid_t mapping is the identity mapping.
 >> If you changed it, what advantages are there to your approach?
+
+I changed it so that pid is generated for every new process creation. Since not all threads have a userspace process, all pids are smaller than tids in this case. An advantage of this approach is that pids can be less wasted.
 
                SURVEY QUESTIONS
                ================
