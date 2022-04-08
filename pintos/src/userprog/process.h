@@ -4,6 +4,7 @@
 #include "threads/thread.h"
 #include "threads/synch.h"
 
+#define ARGC_LIMIT 100
 #define PID_ERROR ((pid_t)-1)
 typedef int pid_t;
 

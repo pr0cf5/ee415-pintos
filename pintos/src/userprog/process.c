@@ -690,6 +690,11 @@ load (const char *cmd_line, struct process_info *pi, void (**eip) (void), void *
     cursor++;
   }
 
+  if (argc > ARGC_LIMIT) {
+    success = false;
+    goto done;
+  }
+
   user_stack -= (argc + 1) * sizeof(void *);
   tokenize(cmd_line_copy, (char **)user_stack, &argc);
   {
