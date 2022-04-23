@@ -568,6 +568,7 @@ init_thread (struct thread *t, const char *name, int priority)
 
 #ifdef VM
    t->kernel_fault_allowed = false;
+   t->mid_counter = 0;
 #endif
 
   old_level = intr_disable ();

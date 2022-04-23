@@ -131,6 +131,7 @@ struct thread
 
 #ifdef VM
    bool kernel_fault_allowed;
+   int mid_counter;
 #endif
 
     /* Owned by thread.c. */

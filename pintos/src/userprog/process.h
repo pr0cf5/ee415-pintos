@@ -54,6 +54,9 @@ struct process_info {
     /* related to fd management */
     struct list user_file_list;
 
+    /* related to mid management */
+    struct list mmap_entries_list;
+
     /* used for synch */
     struct lock lock;
 
@@ -95,5 +98,6 @@ pid_t process_execute (const char *file_name);
 int process_wait (pid_t);
 void process_exit (void);
 void process_activate (void);
+
 
 #endif /* userprog/process.h */

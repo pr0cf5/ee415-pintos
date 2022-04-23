@@ -12,8 +12,29 @@
 #include "filesys/filesys.h"
 #include "filesys/directory.h"
 #include "devices/input.h"
+#include "vm/vpage.h"
 
 static void syscall_handler (struct intr_frame *);
+static mid_t mid_allocate();
+static void mid_release(mid_t mid);
+static bool user_file_less(const struct list_elem *e1, const struct list_elem *e2, void *aux);
+static bool append_dir(struct process_info *pi, struct dir *dir, int *fd);
+static bool append_file(struct process_info *pi, struct file *file, int *fd);
+static struct user_file *user_file_get(struct process_info *pi, int fd);
+static bool user_file_remove(struct process_info *pi, int fd);
+static int fd_allocate(struct process_info *pi);
+static char *strdup_user(const char *user_string, bool *fault);
+static struct mmap_entry *mmap_entry_append(struct file *file, void *data);
+static struct mmap_entry *mmap_entry_get(mid_t mid);
+static void mmap_entry_remove(struct mmap_entry *);
+
+static mid_t mid_allocate() {
+  return ++thread_current()->mid_counter;
+}
+
+static void mid_release(mid_t mid) {
+  
+}
 
 static bool user_file_less(const struct list_elem *e1, const struct list_elem *e2, void *aux) {
   struct user_file *f1 = list_entry(e1, struct user_file, elem);
@@ -46,7 +67,7 @@ bool init_stdout(struct process_info *pi) {
 }
 
 /* allocates fd and user_file structure for dir, and appends it to pi's list */
-bool append_dir(struct process_info *pi, struct dir *dir, int *fd) {
+static bool append_dir(struct process_info *pi, struct dir *dir, int *fd) {
   struct user_file *f = malloc(sizeof(struct user_file));
   if (f == NULL) {
     return false;
@@ -60,7 +81,7 @@ bool append_dir(struct process_info *pi, struct dir *dir, int *fd) {
 }
 
 /* allocates fd and user_file structure for file, and appends it to pi's list */
-bool append_file(struct process_info *pi, struct file *file, int *fd) {
+static bool append_file(struct process_info *pi, struct file *file, int *fd) {
   struct user_file *f = malloc(sizeof(struct user_file));
   if (f == NULL) {
     return false;
@@ -73,7 +94,7 @@ bool append_file(struct process_info *pi, struct file *file, int *fd) {
   return true;
 }
 
-struct user_file *user_file_get(struct process_info *pi, int fd) {
+static struct user_file *user_file_get(struct process_info *pi, int fd) {
   for (struct list_elem *e = list_begin(&pi->user_file_list); 
     e != list_end(&pi->user_file_list);
     e = list_next(e)) {
@@ -85,7 +106,7 @@ struct user_file *user_file_get(struct process_info *pi, int fd) {
   return NULL;
 }
 
-bool user_file_remove(struct process_info *pi, int fd) {
+static bool user_file_remove(struct process_info *pi, int fd) {
   struct user_file *f = user_file_get(pi, fd);
   if (f == NULL) {
     return false;
@@ -99,7 +120,7 @@ bool user_file_remove(struct process_info *pi, int fd) {
   free(f);
 }
 
-int fd_allocate(struct process_info *pi) {
+static int fd_allocate(struct process_info *pi) {
   int new_fd = 0;
   for (struct list_elem *e = list_begin(&pi->user_file_list); 
     e != list_end(&pi->user_file_list);
@@ -113,6 +134,49 @@ int fd_allocate(struct process_info *pi) {
     }
   }
   return new_fd;
+}
+
+static struct mmap_entry *mmap_entry_append(struct file *file, void *data) {
+  struct mmap_entry *me = malloc(sizeof(struct mmap_entry));
+  struct list *me_list = &thread_current()->process_info->mmap_entries_list;
+  if (me == NULL) {
+    return NULL;
+  }
+  me->file = file;
+  me->mid = mid_allocate();
+  me->length = file_length(file);
+  me->page_cnt = (size_t)pg_round_up(me->length) / PGSIZE;
+  me->uaddr = data;
+  // what about the executable file, can this be mapped as writable? hmmm...
+  vpage_info_lazy_allocate(data, file, 0, me->length, thread_current()->process_info->pid, true);
+  list_push_back(me_list, &me->elem);
+  return me;
+}
+
+static struct mmap_entry *mmap_entry_get(mid_t mid) {
+  struct list *me_list = &thread_current()->process_info->mmap_entries_list;
+  for (struct list_elem *e = list_begin(me_list); e != list_end(me_list); e = list_next(e)) {
+    struct mmap_entry *me = list_entry(e, struct mmap_entry, elem);
+    if (me->mid == mid) {
+      return me;
+    }
+  }
+  return NULL;
+}
+
+static void mmap_entry_remove(struct mmap_entry *me) {
+  struct vpage_info *vpi = NULL;
+  // do writeback to file
+  fault_region_enter();
+  file_write(me->file, me->uaddr, me->length);
+  fault_region_exit();
+  // close file
+  file_close(me->file);
+  // release vpage_info
+  for (int i = 0; i < me->page_cnt; i++) {
+    vpage_info_find_and_release((char*)me->uaddr + PGSIZE*i, thread_current()->process_info->pid);
+  }
+  
 }
 
 void user_file_release(struct user_file *uf) {
@@ -522,6 +586,39 @@ int sys_yield() {
   return 0;
 }
 
+mid_t sys_mmap(int fd, void *data) {
+  mid_t mid;
+  struct user_file *file;
+  struct file *mmap_file;
+  
+  if ((file = user_file_get(thread_current()->process_info, fd)) == NULL) {
+    mid = -1;
+    goto done;
+  }
+  if (file->type == UserFileFile) {
+    lock_acquire(&filesys_lock);
+    mmap_file = file_reopen(file->inner.file);
+    lock_release(&filesys_lock);
+    struct mmap_entry *me = mmap_entry_append(mmap_file, data);
+    if (me == NULL) {
+      mid = -1;
+      goto done;
+    }
+    mid = me->mid;
+  }
+  else {
+    mid = -1;
+    goto done;
+  } 
+done:
+  return mid;
+}
+
+int sys_munmap(mid_t mid) {
+  struct mmap_entry *me = mmap_entry_get(mid);
+  mmap_entry_remove(me);
+}
+
 void sys_exit(int exit_code) {
   struct process_info *pi = thread_current()->process_info;
   pi->exit_code = exit_code;
@@ -534,7 +631,7 @@ syscall_handler (struct intr_frame *f)
 {
   struct syscall_arguments *args = f->esp;
   struct syscall_arguments args_copy;
-  if (!access_ok(args, true) || !access_ok(&args->syscall_args[4], true)) {
+  if (!access_ok(args, true) || !access_ok((char *)args + sizeof(struct syscall_arguments), true)) {
     sys_exit(-1);
     return;
   }
@@ -604,6 +701,14 @@ syscall_handler (struct intr_frame *f)
     }
     case SYS_YIELD: {
       f->eax = sys_yield();
+      break;
+    }
+    case SYS_MMAP: {
+      f->eax = sys_mmap((int)args_copy.syscall_args[0], (void *)args_copy.syscall_args[1]);
+      break;
+    }
+    case SYS_MUNMAP: {
+      f->eax = sys_munmap((mid_t)args_copy.syscall_args[0]);
       break;
     }
     default: {

@@ -117,7 +117,7 @@ void vpage_init() {
 
 struct vpage_info *
 vpage_info_lazy_allocate(void *uaddr, struct file *file, off_t offset, size_t length, pid_t pid, bool writable) {
-    struct vpage_info *new = malloc(sizeof(struct vpage_info));
+    struct vpage_info *new = malloc(sizeof(struct vpage_info)), *old;
     if (new == NULL) {
         return NULL;
     }
@@ -128,13 +128,21 @@ vpage_info_lazy_allocate(void *uaddr, struct file *file, off_t offset, size_t le
     new->backend.lazy.length = length;
     new->pid = pid;
     new->writable = writable;
+    lock_acquire(&vm_lock);
+    if ((old = hash_find(&vpage_info_map, &new->elem)) != NULL) {
+        free(new);
+        new = NULL;
+        goto done;
+    }
     hash_insert(&vpage_info_map, &new->elem);
+done:
+    lock_release(&vm_lock);
     return new;
 }
 
 struct vpage_info *
 vpage_info_inmem_allocate(void *uaddr, void *paddr, pid_t pid, bool writable) {
-    struct vpage_info *new = malloc(sizeof(struct vpage_info));
+    struct vpage_info *new = malloc(sizeof(struct vpage_info)), *old;
     if (new == NULL) {
         return NULL;
     }
@@ -144,13 +152,21 @@ vpage_info_inmem_allocate(void *uaddr, void *paddr, pid_t pid, bool writable) {
     new->backend.inmem.last_use = timer_ticks();
     new->pid = pid;
     new->writable = writable;
+    lock_acquire(&vm_lock);
+    if ((old = hash_find(&vpage_info_map, &new->elem)) != NULL) {
+        free(new);
+        new = NULL;
+        goto done;
+    }
     hash_insert(&vpage_info_map, &new->elem);
+done:
+    lock_release(&vm_lock);
     return new;
 }
 
 struct vpage_info *
 vpage_info_swapped_allocate(void *uaddr, uint32_t swap_idx, pid_t pid, bool writable) {
-    struct vpage_info *new = malloc(sizeof(struct vpage_info));
+    struct vpage_info *new = malloc(sizeof(struct vpage_info)), *old;
     if (new == NULL) {
         return NULL;
     }
@@ -159,7 +175,15 @@ vpage_info_swapped_allocate(void *uaddr, uint32_t swap_idx, pid_t pid, bool writ
     new->backend.swap.swap_index = swap_idx;
     new->pid = pid;
     new->writable = writable;
+    lock_acquire(&vm_lock);
+    if ((old = hash_find(&vpage_info_map, &new->elem)) != NULL) {
+        free(new);
+        new = NULL;
+        goto done;
+    }
     hash_insert(&vpage_info_map, &new->elem);
+done:
+    lock_release(&vm_lock);
     return new;
 }
 
@@ -172,7 +196,9 @@ vpage_info_release(struct vpage_info *vpi) {
             break;
         }
         case VPAGE_LAZY: {
-            // dont free file, because it is freed in process_exit anyway
+            if (vpi->backend.lazy.file != NULL) {
+                file_close(vpi->backend.lazy.file);
+            }
             break;
         }
         case VPAGE_SWAPPED: {
@@ -186,6 +212,45 @@ vpage_info_release(struct vpage_info *vpi) {
     }
     hash_delete(&vpage_info_map, &vpi->elem);
     free(vpi);
+    lock_release(&vm_lock);
+}
+
+void vpage_info_find_and_release(void *upage, pid_t pid) {
+    lock_acquire(&vm_lock);
+    struct hash_iterator i;
+    hash_first(&i, &vpage_info_map);
+    while(hash_next(&i)) {
+        struct vpage_info *vpi = hash_entry(hash_cur(&i), struct vpage_info, elem);
+        if (vpi->uaddr == upage && vpi->pid == pid) {
+            switch (vpi->status) {
+                case VPAGE_INMEM: {
+                    pagedir_clear_page(thread_current()->pagedir, upage);
+                    palloc_free_page(vpi->backend.inmem.paddr);
+                    hash_delete(&vpage_info_map, &vpi->elem);
+                    free(vpi);
+                    goto done;
+                }
+                case VPAGE_LAZY: {
+                    if (vpi->backend.lazy.file != NULL) {
+                        file_close(vpi->backend.lazy.file);
+                    }
+                    hash_delete(&vpage_info_map, &vpi->elem);
+                    free(vpi);
+                    goto done;
+                }
+                case VPAGE_SWAPPED: {
+                    swap_free(vpi->backend.swap.swap_index);
+                    hash_delete(&vpage_info_map, &vpi->elem);
+                    free(vpi);
+                    goto done;
+                }
+                default: {
+                    NOT_REACHED();
+                }
+            }
+        }
+    }
+done:
     lock_release(&vm_lock);
 }
 

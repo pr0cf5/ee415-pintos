@@ -154,6 +154,7 @@ struct process_info *process_info_allocate(struct semaphore *sema, struct proces
   strlcpy(new->file_name, "process-default", sizeof(new->file_name));
   list_init(&new->children_pi);
   list_init(&new->user_file_list);
+  list_init(&new->mmap_entries_list);
   list_init(&new->signal_handler_infos);
   list_init(&new->pending_signals);
   lock_init(&new->pending_signals_lock);
@@ -597,8 +598,11 @@ load (const char *cmd_line, struct process_info *pi, void (**eip) (void), void *
     }
   lock_acquire(&filesys_lock);
   file_deny_write(file);
+  pi->exe_file = file_reopen(file);
   lock_release(&filesys_lock);
-  pi->exe_file = file;
+  if (pi->exe_file == NULL) {
+    goto done;
+  }
 
   /* Read and verify executable header. */
   if (file_read (file, &ehdr, sizeof ehdr) != sizeof ehdr

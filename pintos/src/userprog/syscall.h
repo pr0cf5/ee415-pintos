@@ -29,16 +29,22 @@ struct user_file {
     struct list_elem elem;
 };
 
-/* user_file related APIs */
-int fd_allocate(struct process_info *pi);
-int fd_release();
+typedef int mid_t;
+
+struct mmap_entry {
+    mid_t mid;
+    struct file *file;
+    void *uaddr;
+    size_t length;
+    size_t page_cnt;
+    struct list_elem elem;
+};
+
 bool init_stdin(struct process_info *pi);
 bool init_stdout(struct process_info *pi);
-bool append_dir(struct process_info *pi, struct dir *dir, int *fd);
-bool append_file(struct process_info *pi, struct file *file, int *fd);
-struct user_file *user_file_get(struct process_info *pi, int fd);
 void user_file_release(struct user_file *uf);
-bool user_file_remove(struct process_info *pi, int fd);
+
+void mmap_remove(struct mmap_entry *me);
 
 void syscall_init (void);
 int sys_create(const char *file_name, size_t initial_size);
@@ -54,7 +60,10 @@ int sys_wait(pid_t pid);
 int sys_sendsig(pid_t pid, int signum);
 int sys_sigaction(int signum, void *handler);
 int sys_yield();
+mid_t sys_mmap(int fd, void *data);
+int sys_munmap(mid_t mid);
 void sys_exit(int exit_code);
+void mmap_entry_allocate();
 
 
 #endif /* userprog/syscall.h */
