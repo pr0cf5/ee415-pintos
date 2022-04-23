@@ -129,6 +129,10 @@ struct thread
    struct process_info *process_info;
 #endif
 
+#ifdef VM
+   bool kernel_fault_allowed;
+#endif
+
     /* Owned by thread.c. */
     unsigned magic;                     /* Detects stack overflow. */
   };

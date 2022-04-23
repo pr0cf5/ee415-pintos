@@ -6,7 +6,7 @@
 
 struct syscall_arguments {
     uint32_t syscall_nr;
-    uint32_t syscall_args[];
+    uint32_t syscall_args[5];
 };
 
 #define STDIN_FILENO 0

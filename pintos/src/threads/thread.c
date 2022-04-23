@@ -566,6 +566,10 @@ init_thread (struct thread *t, const char *name, int priority)
   t->process_info = NULL;
 #endif
 
+#ifdef VM
+   t->kernel_fault_allowed = false;
+#endif
+
   old_level = intr_disable ();
   list_push_back (&all_list, &t->allelem);
 

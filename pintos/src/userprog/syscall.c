@@ -533,69 +533,73 @@ static void
 syscall_handler (struct intr_frame *f) 
 {
   struct syscall_arguments *args = f->esp;
-  if (!access_ok(args, true) || !access_ok(&args->syscall_args[5], true)) {
+  struct syscall_arguments args_copy;
+  if (!access_ok(args, true) || !access_ok(&args->syscall_args[4], true)) {
     sys_exit(-1);
     return;
   }
-  
-  switch (args->syscall_nr) {
+  fault_region_enter();
+  memcpy(&args_copy, args, sizeof(args_copy));
+  fault_region_exit();
+
+  switch (args_copy.syscall_nr) {
     case SYS_HALT: {
       shutdown_power_off();
       break;
     }
     case SYS_EXIT: {
-      sys_exit((int)args->syscall_args[0]);
+      sys_exit((int)args_copy.syscall_args[0]);
       break;
     }
     case SYS_OPEN: {
-      f->eax = sys_open((char *)args->syscall_args[0]);
+      f->eax = sys_open((char *)args_copy.syscall_args[0]);
       break;
     }
     case SYS_CREATE: {
-      f->eax = sys_create((char *)args->syscall_args[0], (unsigned)args->syscall_args[1]);
+      f->eax = sys_create((char *)args_copy.syscall_args[0], (unsigned)args_copy.syscall_args[1]);
       break;
     }
     case SYS_REMOVE: {
-      f->eax = sys_remove((char *)args->syscall_args[0]);
+      f->eax = sys_remove((char *)args_copy.syscall_args[0]);
     }
     case SYS_CLOSE: {
-      f->eax = sys_close((int)args->syscall_args[0]);
+      f->eax = sys_close((int)args_copy.syscall_args[0]);
       break;
     }
     case SYS_WRITE: {
-      f->eax = sys_write((int)args->syscall_args[0], (void *)args->syscall_args[1], args->syscall_args[2]);
+      f->eax = sys_write((int)args_copy.syscall_args[0], (void *)args_copy.syscall_args[1], args_copy.syscall_args[2]);
       break;
     }
     case SYS_READ: {
-      f->eax = sys_read((int)args->syscall_args[0], (void *)args->syscall_args[1], args->syscall_args[2]);
+      f->eax = sys_read((int)args_copy.syscall_args[0], (void *)args_copy.syscall_args[1], args_copy.syscall_args[2]);
       break;
     }
     case SYS_SEEK: {
-      f->eax = sys_seek((int)args->syscall_args[0], (int)args->syscall_args[1]);
+      f->eax = sys_seek((int)args_copy.syscall_args[0], (int)args_copy.syscall_args[1]);
       break;
     }
     case SYS_TELL: {
-      f->eax = sys_filesize((int)args->syscall_args[0]);
+      f->eax = sys_filesize((int)args_copy.syscall_args[0]);
       break;
     }
     case SYS_FILESIZE: {
-      f->eax = sys_filesize((int)args->syscall_args[0]);
+      f->eax = sys_filesize((int)args_copy.syscall_args[0]);
       break;
     }
     case SYS_EXEC: {
-      f->eax = sys_exec((const char *)args->syscall_args[0]);
+      f->eax = sys_exec((const char *)args_copy.syscall_args[0]);
       break;
     }
     case SYS_WAIT: {
-      f->eax = sys_wait((pid_t)args->syscall_args[0]);
+      f->eax = sys_wait((pid_t)args_copy.syscall_args[0]);
       break;
     }
     case SYS_SIGACTION: {
-      f->eax = sys_sigaction((int)args->syscall_args[0], (void *)args->syscall_args[1]);
+      f->eax = sys_sigaction((int)args_copy.syscall_args[0], (void *)args_copy.syscall_args[1]);
       break;
     }
     case SYS_SENDSIG: {
-      f->eax = sys_sendsig((pid_t)args->syscall_args[0], (int)args->syscall_args[1]);
+      f->eax = sys_sendsig((pid_t)args_copy.syscall_args[0], (int)args_copy.syscall_args[1]);
       break;
     }
     case SYS_YIELD: {
@@ -603,7 +607,7 @@ syscall_handler (struct intr_frame *f)
       break;
     }
     default: {
-      printf("unimplemented syscall %d\n", args->syscall_nr);
+      printf("unimplemented syscall %d\n", args_copy.syscall_nr);
       break;
     }
   }

@@ -191,14 +191,22 @@ vpage_info_release(struct vpage_info *vpi) {
 
 // argument must be page aligned
 enum user_fault_type vpage_handle_user_fault(void *uaddr) {
+    
     enum user_fault_type res;
+    pid_t pid;
     void *upage = pg_round_down(uaddr);
+
+    // a thread faulted in user context even if it has no userspace... panic!
+    if (!thread_current()->process_info) {
+        NOT_REACHED();
+    }
+    pid = thread_current()->process_info->pid;
     lock_acquire(&vm_lock);
     struct hash_iterator i;
     hash_first(&i, &vpage_info_map);
     while(hash_next(&i)) {
         struct vpage_info *vpi = hash_entry(hash_cur(&i), struct vpage_info, elem);
-        if (vpi->uaddr == upage) {
+        if (vpi->uaddr == upage && vpi->pid == pid) {
             switch (vpi->status) {
                 case VPAGE_INMEM: {
                     // invalid user memory access
@@ -207,16 +215,22 @@ enum user_fault_type vpage_handle_user_fault(void *uaddr) {
                 }
                 case VPAGE_LAZY: {
                     vpage_info_lazy_to_inmem(vpi);
-                    break;
+                    res = UFAULT_CONTINUE;
+                    goto done;
                 }
                 case VPAGE_SWAPPED: {
                     vpage_info_swap_to_inmem(vpi);
-                    break;
+                    res = UFAULT_CONTINUE;
+                    goto done;
+                }
+                default: {
+                    NOT_REACHED();
                 }
             }
         }
     }
-res = UFAULT_CONTINUE;
+// not present: kill
+res = UFAULT_KILL;
 done:
     lock_release(&vm_lock);
     return res;
