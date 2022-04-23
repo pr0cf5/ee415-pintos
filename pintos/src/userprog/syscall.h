@@ -29,8 +29,6 @@ struct user_file {
     struct list_elem elem;
 };
 
-extern struct lock filesys_lock;
-
 /* user_file related APIs */
 int fd_allocate(struct process_info *pi);
 int fd_release();

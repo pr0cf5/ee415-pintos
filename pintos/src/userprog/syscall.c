@@ -13,8 +13,6 @@
 #include "filesys/directory.h"
 #include "devices/input.h"
 
-struct lock filesys_lock;
-
 static void syscall_handler (struct intr_frame *);
 
 static bool user_file_less(const struct list_elem *e1, const struct list_elem *e2, void *aux) {

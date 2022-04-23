@@ -6,6 +6,7 @@
 #include "threads/thread.h"
 #include "userprog/process.h"
 #include "userprog/syscall.h"
+#include "vm/vm.h"
 
 /* Number of page faults processed. */
 static long long page_fault_cnt;
@@ -154,8 +155,12 @@ page_fault (struct intr_frame *f)
      body, and replace it with code that brings in the page to
      which fault_addr refers. */
    if (user) {
+   #ifdef VM
+      vm_handle_user_fault(fault_addr);
+   #else
       /* for now, just kill the process */
       sys_exit(-1);
+   #endif
    }
    else {
       printf ("Page fault at %p: %s error %s page in %s context.\n",
