@@ -143,14 +143,16 @@ static struct mmap_entry *mmap_entry_append(struct file *file, void *upage) {
   me->length = file_length(file);
   me->page_cnt = (size_t)pg_round_up(me->length) / PGSIZE;
   me->uaddr = upage;
+  me->dirty = false;
   // what about the executable file, can this be mapped as writable? hmmm...
   rem_length = me->length;
   cur_offset = 0;
   for (int i = 0; i < me->page_cnt; i++) {
     cur_length = rem_length > PGSIZE ? PGSIZE : rem_length;
     struct file *file_copy = file_reopen(file);
+    // initially, set permission to read-only
     if (!file_copy || 
-      !vpage_info_lazy_allocate((char *)upage + PGSIZE*i, file_copy, cur_offset, cur_length, thread_current()->process_info->pid, true)) 
+      !vpage_info_lazy_allocate((char *)upage + PGSIZE*i, file_copy, cur_offset, cur_length, thread_current()->process_info->pid, false)) 
       {
         free(me);
         for (int j = 0; j < i; j++) {
@@ -177,6 +179,17 @@ static struct mmap_entry *mmap_entry_get(mid_t mid) {
   return NULL;
 }
 
+struct mmap_entry *mmap_entry_get_by_addr(void *uaddr) {
+  struct list *me_list = &thread_current()->process_info->mmap_entries_list;
+  for (struct list_elem *e = list_begin(me_list); e != list_end(me_list); e = list_next(e)) {
+    struct mmap_entry *me = list_entry(e, struct mmap_entry, elem);
+    if ((char *)me->uaddr <= uaddr && uaddr < (char *)me->uaddr + me->length) {
+      return me;
+    }
+  }
+  return NULL;
+}
+
 void mmap_entry_release(struct mmap_entry *me) {
   struct vpage_info *vpi = NULL;
   int i;
@@ -191,7 +204,7 @@ void mmap_entry_release(struct mmap_entry *me) {
       break;
     }
   }
-  if (i < me->page_cnt) {
+  if (me->dirty) {
     fault_region_enter();
     file_write(me->file, me->uaddr, me->length);
     fault_region_exit();
@@ -619,6 +632,11 @@ mid_t sys_mmap(int fd, void *data) {
   struct user_file *file;
   struct file *mmap_file;
   
+  if (pg_round_down(data) == NULL) {
+    mid = -1;
+    goto done;
+  }
+
   if ((file = user_file_get(thread_current()->process_info, fd)) == NULL) {
     mid = -1;
     goto done;

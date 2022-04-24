@@ -37,6 +37,7 @@ struct mmap_entry {
     void *uaddr;
     size_t length;
     size_t page_cnt;
+    bool dirty;
     struct list_elem elem;
 };
 
@@ -62,6 +63,7 @@ mid_t sys_mmap(int fd, void *data);
 int sys_munmap(mid_t mid);
 void sys_exit(int exit_code);
 void mmap_entry_allocate();
+struct mmap_entry *mmap_entry_get_by_addr(void *uaddr);
 void mmap_entry_release(struct mmap_entry *);
 
 

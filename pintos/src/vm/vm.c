@@ -1,5 +1,6 @@
 #include "threads/vaddr.h"
 #include "userprog/syscall.h"
+#include "userprog/exception.h"
 #include "vm/vm.h"
 #include "vm/vpage.h"
 #include "vm/swap.h"
@@ -43,6 +44,20 @@ void vm_handle_user_fault(void *uaddr, struct intr_frame *f) {
             cur_page += PGSIZE;
         }   
     }
+
+    // handle mmap dirty
+    struct mmap_entry *me;
+    if ((me = mmap_entry_get_by_addr(uaddr)) && f->error_code & PF_W) {
+        me->dirty = true;
+        void *upage = pg_round_down(uaddr);
+        bool inmem;
+        vpage_info_set_writable(upage, pid, true, &inmem);
+        // for in-memory vpages, this fault handler must return so that the second fault does not fault
+        if (inmem) {
+            return;
+        }
+    }
+
     enum user_fault_type ty = vpage_handle_user_fault(uaddr);
     switch (ty) {
         case UFAULT_KILL: {

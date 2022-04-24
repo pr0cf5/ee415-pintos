@@ -6,6 +6,8 @@
 #include "devices/timer.h"
 #include "userprog/process.h"
 #include "userprog/pagedir.h"
+#include "userprog/exception.h"
+#include "userprog/syscall.h"
 #include "vm/swap.h"
 #include "vm/vpage.h"
 #include "filesys/file.h"
@@ -261,6 +263,29 @@ done:
     lock_release(&vm_lock);
 }
 
+void vpage_info_set_writable(void *upage, pid_t pid, bool writable, bool *inmem) {
+    lock_acquire(&vm_lock);
+    struct hash_iterator i;
+    hash_first(&i, &vpage_info_map);
+    *inmem = false;
+    while(hash_next(&i)) {
+        struct vpage_info *vpi = hash_entry(hash_cur(&i), struct vpage_info, elem);
+        if (vpi->uaddr == upage && vpi->pid == pid) {
+            vpi->writable = writable;
+            if (vpi->status == VPAGE_INMEM) {
+                void *paddr = pagedir_get_page(thread_current()->pagedir, upage);
+                ASSERT(paddr);
+                pagedir_clear_page(thread_current()->pagedir, upage);
+                pagedir_set_page(thread_current()->pagedir, upage, paddr, writable);
+                *inmem = true;
+            }
+            goto done;
+        }
+    }
+done:
+    lock_release(&vm_lock);
+}
+
 void vpage_info_release_all(pid_t pid) {
     lock_acquire(&vm_lock);
     struct hash_iterator i;
@@ -306,7 +331,8 @@ enum user_fault_type vpage_handle_user_fault(void *uaddr) {
         NOT_REACHED();
     }
     pid = thread_current()->process_info->pid;
-    lock_acquire(&vm_lock);
+    lock_acquire(&vm_lock);    
+
     struct hash_iterator i;
     hash_first(&i, &vpage_info_map);
     while(hash_next(&i)) {
@@ -314,7 +340,6 @@ enum user_fault_type vpage_handle_user_fault(void *uaddr) {
         if (vpi->uaddr == upage && vpi->pid == pid) {
             switch (vpi->status) {
                 case VPAGE_INMEM: {
-                    // invalid user memory access
                     res = UFAULT_KILL;
                     goto done;
                 }
