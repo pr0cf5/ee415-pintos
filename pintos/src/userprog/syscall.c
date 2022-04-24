@@ -136,9 +136,11 @@ static int fd_allocate(struct process_info *pi) {
   return new_fd;
 }
 
-static struct mmap_entry *mmap_entry_append(struct file *file, void *data) {
+static struct mmap_entry *mmap_entry_append(struct file *file, void *upage) {
   struct mmap_entry *me = malloc(sizeof(struct mmap_entry));
   struct list *me_list = &thread_current()->process_info->mmap_entries_list;
+  size_t cur_length, rem_length;
+  off_t cur_offset;
   if (me == NULL) {
     return NULL;
   }
@@ -146,9 +148,23 @@ static struct mmap_entry *mmap_entry_append(struct file *file, void *data) {
   me->mid = mid_allocate();
   me->length = file_length(file);
   me->page_cnt = (size_t)pg_round_up(me->length) / PGSIZE;
-  me->uaddr = data;
+  me->uaddr = upage;
   // what about the executable file, can this be mapped as writable? hmmm...
-  vpage_info_lazy_allocate(data, file, 0, me->length, thread_current()->process_info->pid, true);
+  rem_length = me->length;
+  cur_offset = 0;
+  for (int i = 0; i < me->page_cnt; i++) {
+    cur_length = rem_length > PGSIZE ? PGSIZE : rem_length;
+    if (!vpage_info_lazy_allocate((char *)upage + PGSIZE*i, file, cur_offset, cur_length, thread_current()->process_info->pid, true)) {
+      free(me);
+      for (int j = 0; j < i; j++) {
+        vpage_info_find_and_release((char *)upage + PGSIZE*j, thread_current()->process_info->pid);
+      }
+      return NULL;
+    }
+    rem_length -= cur_length; 
+    cur_offset += PGSIZE;
+  }
+  
   list_push_back(me_list, &me->elem);
   return me;
 }
@@ -166,17 +182,36 @@ static struct mmap_entry *mmap_entry_get(mid_t mid) {
 
 static void mmap_entry_remove(struct mmap_entry *me) {
   struct vpage_info *vpi = NULL;
-  // do writeback to file
-  fault_region_enter();
-  file_write(me->file, me->uaddr, me->length);
-  fault_region_exit();
+  int i;
+  // optimize: if vpi is lazy, don't do writeback
+  // this need not be locked because transition from lazy to inmem can only be triggered by the current process
+  for (i = 0; i < me->page_cnt; i++) {
+    struct vpage_info *vpi_ = NULL;
+    if ((vpi_ = vpage_info_find((char*)me->uaddr + PGSIZE*i, thread_current()->process_info->pid)) == NULL) {
+      NOT_REACHED();
+    }
+    if (vpi_->status != VPAGE_LAZY) {
+      break;
+    }
+    else {
+      // prevent double freeing of file
+      vpi_->backend.lazy.file = NULL;
+    }
+  }
+  if (i < me->page_cnt) {
+    fault_region_enter();
+    file_write(me->file, me->uaddr, me->length);
+    fault_region_exit();
+  }
+  
   // close file
   file_close(me->file);
+
   // release vpage_info
   for (int i = 0; i < me->page_cnt; i++) {
     vpage_info_find_and_release((char*)me->uaddr + PGSIZE*i, thread_current()->process_info->pid);
   }
-  
+  list_remove(&me->elem);  
 }
 
 void user_file_release(struct user_file *uf) {
@@ -599,7 +634,12 @@ mid_t sys_mmap(int fd, void *data) {
     lock_acquire(&filesys_lock);
     mmap_file = file_reopen(file->inner.file);
     lock_release(&filesys_lock);
-    struct mmap_entry *me = mmap_entry_append(mmap_file, data);
+    void *upage = pg_round_down(data);
+    if (upage != data) {
+      mid = -1;
+      goto done;
+    }
+    struct mmap_entry *me = mmap_entry_append(mmap_file, upage);
     if (me == NULL) {
       mid = -1;
       goto done;

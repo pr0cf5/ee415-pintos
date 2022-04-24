@@ -50,4 +50,5 @@ struct vpage_info *vpage_info_inmem_allocate(void *uaddr, void *paddr, pid_t pid
 struct vpage_info *vpage_info_swapped_allocate(void *uaddr, uint32_t swap_idx, pid_t pid, bool writable);
 void vpage_info_release(struct vpage_info *vpi);
 void vpage_info_find_and_release(void *upage, pid_t pid);
+struct vpage_info *vpage_info_find(void *upage, pid_t pid);
 enum user_fault_type vpage_handle_user_fault(void *uaddr);

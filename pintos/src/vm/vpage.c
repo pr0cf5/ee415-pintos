@@ -85,7 +85,9 @@ vpage_info_lazy_to_inmem(struct vpage_info *vpi) {
         paddr = evict_page();
     }
     if (vpi->backend.lazy.file) {
+        lock_acquire(&filesys_lock);
         file_read_at(vpi->backend.lazy.file, paddr, vpi->backend.lazy.length, vpi->backend.lazy.offset);
+        lock_release(&filesys_lock);
     }
     else {
         memset(paddr, 0, PAGE_SIZE);
@@ -254,9 +256,26 @@ done:
     lock_release(&vm_lock);
 }
 
+struct vpage_info *vpage_info_find(void *upage, pid_t pid) {
+    struct vpage_info *rv;
+    lock_acquire(&vm_lock);
+    struct hash_iterator i;
+    hash_first(&i, &vpage_info_map);
+    while(hash_next(&i)) {
+        struct vpage_info *vpi = hash_entry(hash_cur(&i), struct vpage_info, elem);
+        if (vpi->uaddr == upage && vpi->pid == pid) {
+            rv = vpi;
+            goto done;
+        }
+    }
+rv = NULL;
+done:
+    lock_release(&vm_lock);
+    return rv;
+}
+
 // argument must be page aligned
 enum user_fault_type vpage_handle_user_fault(void *uaddr) {
-    
     enum user_fault_type res;
     pid_t pid;
     void *upage = pg_round_down(uaddr);
