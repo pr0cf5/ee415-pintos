@@ -21,6 +21,7 @@ static void *evict_page();
 static void vpage_info_inmem_to_swap(struct vpage_info *vpi);
 static void vpage_info_lazy_to_inmem(struct vpage_info *vpi);
 static void vpage_info_swap_to_inmem(struct vpage_info *vpi);
+void vpage_info_release_inner(struct vpage_info *vpi);
 
 static int vpage_hash(struct hash_elem *e) {
     struct vpage_info *vp = hash_entry(e, struct vpage_info, elem);
@@ -90,6 +91,7 @@ vpage_info_lazy_to_inmem(struct vpage_info *vpi) {
         lock_acquire(&filesys_lock);
         file_read_at(vpi->backend.lazy.file, paddr, vpi->backend.lazy.length, vpi->backend.lazy.offset);
         memset((char *)paddr + vpi->backend.lazy.length, 0, PGSIZE - vpi->backend.lazy.length);
+        file_close(vpi->backend.lazy.file);
         lock_release(&filesys_lock);
     }
     else {
@@ -115,6 +117,37 @@ vpage_info_swap_to_inmem(struct vpage_info *vpi) {
     pagedir_set_page(thread_current()->pagedir, vpi->uaddr, paddr, vpi->writable);
 }
 
+// synchronization must be guaranteed by the caller
+void vpage_info_release_inner(struct vpage_info *vpi) {
+    switch (vpi->status) {
+        case VPAGE_INMEM: {
+            pagedir_clear_page(thread_current()->pagedir, vpi->uaddr);
+            palloc_free_page(vpi->backend.inmem.paddr);
+            hash_delete(&vpage_info_map, &vpi->elem);
+            free(vpi);
+            break;
+        }
+        case VPAGE_LAZY: {
+            if (vpi->backend.lazy.file != NULL) {
+                file_close(vpi->backend.lazy.file);
+                vpi->backend.lazy.file = NULL;
+            }
+            hash_delete(&vpage_info_map, &vpi->elem);
+            free(vpi);
+            break;
+        }
+        case VPAGE_SWAPPED: {
+            swap_free(vpi->backend.swap.swap_index);
+            hash_delete(&vpage_info_map, &vpi->elem);
+            free(vpi);
+            break;
+        }
+        default: {
+            NOT_REACHED();
+        }
+    }
+}
+
 void vpage_init() {
     hash_init(&vpage_info_map, vpage_hash, vpage_less, NULL);
     lock_init(&vm_lock);
@@ -123,12 +156,13 @@ void vpage_init() {
 struct vpage_info *
 vpage_info_lazy_allocate(void *uaddr, struct file *file, off_t offset, size_t length, pid_t pid, bool writable) {
     struct vpage_info *new = malloc(sizeof(struct vpage_info)), *old;
-    if (new == NULL) {
+    struct file *file_copy = file_reopen(file);
+    if (!new || !file_copy) {
         return NULL;
     }
     new->status = VPAGE_LAZY;
     new->uaddr = uaddr;
-    new->backend.lazy.file = file;
+    new->backend.lazy.file = file_copy;
     new->backend.lazy.offset = offset;
     new->backend.lazy.length = length;
     new->pid = pid;
@@ -195,28 +229,7 @@ done:
 void
 vpage_info_release(struct vpage_info *vpi) {
     lock_acquire(&vm_lock);
-    switch(vpi->status) {
-        case VPAGE_INMEM: {
-            palloc_free_page(vpi->backend.inmem.paddr);
-            break;
-        }
-        case VPAGE_LAZY: {
-            if (vpi->backend.lazy.file != NULL) {
-                file_close(vpi->backend.lazy.file);
-            }
-            break;
-        }
-        case VPAGE_SWAPPED: {
-            swap_free(vpi->backend.swap.swap_index);
-            break;
-        }
-        default: {
-            NOT_REACHED();
-            break;
-        }
-    }
-    hash_delete(&vpage_info_map, &vpi->elem);
-    free(vpi);
+    vpage_info_release_inner(vpi);
     lock_release(&vm_lock);
 }
 
@@ -227,32 +240,24 @@ void vpage_info_find_and_release(void *upage, pid_t pid) {
     while(hash_next(&i)) {
         struct vpage_info *vpi = hash_entry(hash_cur(&i), struct vpage_info, elem);
         if (vpi->uaddr == upage && vpi->pid == pid) {
-            switch (vpi->status) {
-                case VPAGE_INMEM: {
-                    pagedir_clear_page(thread_current()->pagedir, upage);
-                    palloc_free_page(vpi->backend.inmem.paddr);
-                    hash_delete(&vpage_info_map, &vpi->elem);
-                    free(vpi);
-                    goto done;
-                }
-                case VPAGE_LAZY: {
-                    if (vpi->backend.lazy.file != NULL) {
-                        file_close(vpi->backend.lazy.file);
-                    }
-                    hash_delete(&vpage_info_map, &vpi->elem);
-                    free(vpi);
-                    goto done;
-                }
-                case VPAGE_SWAPPED: {
-                    swap_free(vpi->backend.swap.swap_index);
-                    hash_delete(&vpage_info_map, &vpi->elem);
-                    free(vpi);
-                    goto done;
-                }
-                default: {
-                    NOT_REACHED();
-                }
-            }
+            vpage_info_release_inner(vpi);
+            goto done;
+        }
+    }
+done:
+    lock_release(&vm_lock);
+}
+
+void vpage_info_release_all(pid_t pid) {
+    lock_acquire(&vm_lock);
+    struct hash_iterator i;
+do_again:
+    hash_first(&i, &vpage_info_map);
+    while(hash_next(&i)) {
+        struct vpage_info *vpi = hash_entry(hash_cur(&i), struct vpage_info, elem);
+        if (vpi->pid == pid) {
+            vpage_info_release_inner(vpi);
+            goto do_again;
         }
     }
 done:

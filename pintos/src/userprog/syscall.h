@@ -44,8 +44,6 @@ bool init_stdin(struct process_info *pi);
 bool init_stdout(struct process_info *pi);
 void user_file_release(struct user_file *uf);
 
-void mmap_remove(struct mmap_entry *me);
-
 void syscall_init (void);
 int sys_create(const char *file_name, size_t initial_size);
 int sys_remove(const char *file_name);
@@ -64,6 +62,7 @@ mid_t sys_mmap(int fd, void *data);
 int sys_munmap(mid_t mid);
 void sys_exit(int exit_code);
 void mmap_entry_allocate();
+void mmap_entry_release(struct mmap_entry *);
 
 
 #endif /* userprog/syscall.h */

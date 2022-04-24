@@ -21,12 +21,11 @@ static bool user_file_less(const struct list_elem *e1, const struct list_elem *e
 static bool append_dir(struct process_info *pi, struct dir *dir, int *fd);
 static bool append_file(struct process_info *pi, struct file *file, int *fd);
 static struct user_file *user_file_get(struct process_info *pi, int fd);
-static bool user_file_remove(struct process_info *pi, int fd);
+static bool user_file_get_and_release(struct process_info *pi, int fd);
 static int fd_allocate(struct process_info *pi);
 static char *strdup_user(const char *user_string, bool *fault);
 static struct mmap_entry *mmap_entry_append(struct file *file, void *data);
 static struct mmap_entry *mmap_entry_get(mid_t mid);
-static void mmap_entry_remove(struct mmap_entry *);
 
 static mid_t mid_allocate() {
   return ++thread_current()->mid_counter;
@@ -106,18 +105,13 @@ static struct user_file *user_file_get(struct process_info *pi, int fd) {
   return NULL;
 }
 
-static bool user_file_remove(struct process_info *pi, int fd) {
+static bool user_file_get_and_release(struct process_info *pi, int fd) {
   struct user_file *f = user_file_get(pi, fd);
   if (f == NULL) {
     return false;
   }
   list_remove(&f->elem);
-  if (f->type == UserFileFile || f->type == UserFileDir) {
-    lock_acquire(&filesys_lock);
-    file_close(f->inner.file);
-    lock_release(&filesys_lock);
-  }
-  free(f);
+  user_file_release(f);
 }
 
 static int fd_allocate(struct process_info *pi) {
@@ -154,10 +148,13 @@ static struct mmap_entry *mmap_entry_append(struct file *file, void *upage) {
   cur_offset = 0;
   for (int i = 0; i < me->page_cnt; i++) {
     cur_length = rem_length > PGSIZE ? PGSIZE : rem_length;
-    if (!vpage_info_lazy_allocate((char *)upage + PGSIZE*i, file, cur_offset, cur_length, thread_current()->process_info->pid, true)) {
-      free(me);
-      for (int j = 0; j < i; j++) {
-        vpage_info_find_and_release((char *)upage + PGSIZE*j, thread_current()->process_info->pid);
+    struct file *file_copy = file_reopen(file);
+    if (!file_copy || 
+      !vpage_info_lazy_allocate((char *)upage + PGSIZE*i, file_copy, cur_offset, cur_length, thread_current()->process_info->pid, true)) 
+      {
+        free(me);
+        for (int j = 0; j < i; j++) {
+          vpage_info_find_and_release((char *)upage + PGSIZE*j, thread_current()->process_info->pid);
       }
       return NULL;
     }
@@ -180,7 +177,7 @@ static struct mmap_entry *mmap_entry_get(mid_t mid) {
   return NULL;
 }
 
-static void mmap_entry_remove(struct mmap_entry *me) {
+void mmap_entry_release(struct mmap_entry *me) {
   struct vpage_info *vpi = NULL;
   int i;
   // optimize: if vpi is lazy, don't do writeback
@@ -192,10 +189,6 @@ static void mmap_entry_remove(struct mmap_entry *me) {
     }
     if (vpi_->status != VPAGE_LAZY) {
       break;
-    }
-    else {
-      // prevent double freeing of file
-      vpi_->backend.lazy.file = NULL;
     }
   }
   if (i < me->page_cnt) {
@@ -236,7 +229,6 @@ static char *strdup_user(const char *user_string, bool *fault) {
   for (size_t i = 0 ;; i++) {
     char c;
     if (copy_from_user(&c, user_string+i, 1) != 1) {
-      printf("touch %p\n", user_string+i);
       *fault = true;
       return NULL;
     }
@@ -250,7 +242,6 @@ static char *strdup_user(const char *user_string, bool *fault) {
     return NULL;
   }
   if (copy_from_user(out, user_string, length+1) == -1) {
-    printf("touch %p %d\n", user_string, length+1);
     *fault = true;
     free(out);
     return NULL;
@@ -306,7 +297,7 @@ sys_close(int fd) {
     goto done;
   }
   if (file->type == UserFileFile || file->type == UserFileDir) {
-    if (!user_file_remove(thread_current()->process_info, fd)) {
+    if (!user_file_get_and_release(thread_current()->process_info, fd)) {
       return_value = -1;
       goto done;
     }
@@ -658,7 +649,7 @@ done:
 
 int sys_munmap(mid_t mid) {
   struct mmap_entry *me = mmap_entry_get(mid);
-  mmap_entry_remove(me);
+  mmap_entry_release(me);
 }
 
 void sys_exit(int exit_code) {

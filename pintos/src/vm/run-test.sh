@@ -4,7 +4,8 @@ pintos -v -k --qemu --filesys-size=2 --swap-size=4 \
 -p tests/userprog/sc-bad-sp -a sc-bad-sp \
 -p tests/userprog/args-none -a args-none \
 -p tests/filesys/base/syn-read -a syn-read \
--p tests/vm/page-merge-par -a page-merge-par \
+-p tests/vm/page-merge-mm -a page-merge-mm \
 -p tests/vm/child-sort -a child-sort \
+-p tests/vm/child-qsort-mm -a child-qsort-mm \
 -p ../../tests/vm/sample.txt -a sample.txt \
--- -q  -f run page-merge-par
+-- -q  -f run page-merge-mm

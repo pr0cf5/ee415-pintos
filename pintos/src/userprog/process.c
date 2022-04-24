@@ -356,22 +356,6 @@ process_exit (void)
   struct thread *cur = thread_current ();
   uint32_t *pd;
 
-  /* Destroy the current process's page directory and switch back
-     to the kernel-only page directory. */
-  pd = cur->pagedir;
-  if (pd != NULL) 
-    {
-      /* Correct ordering here is crucial.  We must set
-         cur->pagedir to NULL before switching page directories,
-         so that a timer interrupt can't switch back to the
-         process page directory.  We must activate the base page
-         directory before destroying the process's page
-         directory, or our active page directory will be one
-         that's been freed (and cleared). */
-      cur->pagedir = NULL;
-      pagedir_activate (NULL);
-      pagedir_destroy (pd);
-    }
   if (cur->process_info) {
     struct process_info *pi = cur->process_info;
     /* if pi has children, set all of its parent_pi pointers to NULL */
@@ -382,6 +366,24 @@ process_exit (void)
         ASSERT(child_pi->parent_pi == pi);
         child_pi->parent_pi = NULL;
     }
+    /* free all mmap entries */
+    {
+      struct list_elem *cur, *next;
+      cur = list_begin(&pi->mmap_entries_list);
+      while(cur != list_end(&pi->mmap_entries_list)) {
+        next = list_next(cur);
+        struct mmap_entry *me = list_entry(cur, struct mmap_entry, elem);
+        list_remove(&me->elem);
+        mmap_entry_release(me);
+        cur = next;
+      }
+    }
+
+    /* free all vapge entries */
+    {
+      vpage_info_release_all(pi->pid);
+    }
+
     /* free all user_file objects */
     {
       struct list_elem *cur, *next;
@@ -443,8 +445,21 @@ process_exit (void)
       thread_current()->process_info = NULL;
     }
   }
+  pd = cur->pagedir;
+  if (pd != NULL) 
+  {
+    /* Correct ordering here is crucial.  We must set
+        cur->pagedir to NULL before switching page directories,
+        so that a timer interrupt can't switch back to the
+        process page directory.  We must activate the base page
+        directory before destroying the process's page
+        directory, or our active page directory will be one
+        that's been freed (and cleared). */
+    cur->pagedir = NULL;
+    pagedir_activate (NULL);
+    pagedir_destroy (pd);
+  }
 }
-
 /* Sets up the CPU for running user code in the current
    thread.
    This function is called on every context switch. */
