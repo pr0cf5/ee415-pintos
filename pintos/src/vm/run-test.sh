@@ -8,4 +8,4 @@ pintos -v -k --qemu --filesys-size=20 --swap-size=4 \
 -p tests/userprog/rox-multichild -a rox-multichild \
 -p tests/userprog/child-rox -a child-rox \
 -p tests/vm/mmap-write -a mmap-write \
--- -q  -f run mmap-write
+-- -q  -f run page-merge-mm

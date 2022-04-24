@@ -2,6 +2,7 @@
 #include <hash.h>
 #include <stdio.h>
 #include "userprog/process.h"
+#include "userprog/pagedir.h"
 #include "filesys/off_t.h"
 
 enum user_fault_type {
@@ -23,6 +24,7 @@ struct info_lazy {
 
 struct info_inmem {
     void *paddr;
+    uint32_t *pagedir;
     int64_t last_use;
 };
 
