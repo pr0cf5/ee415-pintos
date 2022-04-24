@@ -49,8 +49,8 @@ size_t copy_from_user(void *kaddr, void *uaddr, size_t length) {
         goto done;
     }
     
-    first_pg = _uaddr & PAGE_ALIGN;
-    last_pg = (_uaddr + length) & PAGE_ALIGN;
+    first_pg = pg_round_down(_uaddr);
+    last_pg = pg_round_down(_uaddr + length -1);
     for (iter_pg = first_pg; iter_pg <= last_pg; iter_pg += PAGE_SIZE) {
         if (!access_ok((void *)iter_pg, false)) {
             return_value = -1;

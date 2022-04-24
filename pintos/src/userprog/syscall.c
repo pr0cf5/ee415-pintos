@@ -236,6 +236,7 @@ static char *strdup_user(const char *user_string, bool *fault) {
   for (size_t i = 0 ;; i++) {
     char c;
     if (copy_from_user(&c, user_string+i, 1) != 1) {
+      printf("touch %p\n", user_string+i);
       *fault = true;
       return NULL;
     }
@@ -249,6 +250,7 @@ static char *strdup_user(const char *user_string, bool *fault) {
     return NULL;
   }
   if (copy_from_user(out, user_string, length+1) == -1) {
+    printf("touch %p %d\n", user_string, length+1);
     *fault = true;
     free(out);
     return NULL;
