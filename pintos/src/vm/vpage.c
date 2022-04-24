@@ -45,6 +45,7 @@ static bool vpage_less(struct hash_elem *e1, struct hash_elem *e2) {
 static void *evict_page() {
     struct hash_iterator i;
     struct vpage_info *lru_vpi = NULL;
+    void *paddr;
     int swap_idx;
     hash_first(&i, &vpage_info_map);
     while(hash_next(&i)) {
@@ -61,8 +62,9 @@ static void *evict_page() {
         }
     }
     ASSERT(lru_vpi != NULL);
+    paddr = lru_vpi->backend.inmem.paddr;
     vpage_info_inmem_to_swap(lru_vpi);
-    return lru_vpi->backend.inmem.paddr;
+    return paddr;
 }
 
 // synchronization must be guaranteed by the caller
@@ -87,6 +89,7 @@ vpage_info_lazy_to_inmem(struct vpage_info *vpi) {
     if (vpi->backend.lazy.file) {
         lock_acquire(&filesys_lock);
         file_read_at(vpi->backend.lazy.file, paddr, vpi->backend.lazy.length, vpi->backend.lazy.offset);
+        memset((char *)paddr + vpi->backend.lazy.length, 0, PGSIZE - vpi->backend.lazy.length);
         lock_release(&filesys_lock);
     }
     else {
