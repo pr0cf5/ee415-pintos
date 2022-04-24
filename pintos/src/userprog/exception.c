@@ -153,7 +153,7 @@ page_fault (struct intr_frame *f)
 
    if (user || is_in_fault_region()) {
    #ifdef VM
-      vm_handle_user_fault(fault_addr);
+      vm_handle_user_fault(fault_addr, f);
    #else
       /* for now, just kill the process */
       sys_exit(-1);

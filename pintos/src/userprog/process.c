@@ -558,7 +558,7 @@ struct Elf32_Phdr
 #define PF_W 2          /* Writable. */
 #define PF_R 4          /* Readable. */
 
-static bool setup_stack (void **esp);
+static bool setup_stack (struct process_info *pi, void **esp);
 static bool validate_segment (const struct Elf32_Phdr *, struct file *);
 static bool load_segment (struct process_info *pi, struct file *file, off_t ofs, uint8_t *upage,
                           uint32_t read_bytes, uint32_t zero_bytes,
@@ -692,7 +692,7 @@ load (const char *cmd_line, struct process_info *pi, void (**eip) (void), void *
     }
 
   /* Set up stack. */
-  if (!setup_stack (esp))
+  if (!setup_stack (pi, esp))
     goto done;
 
   /* setup stack */
@@ -875,21 +875,42 @@ load_segment (struct process_info *pi, struct file *file, off_t ofs, uint8_t *up
 /* Create a minimal stack by mapping a zeroed page at the top of
    user virtual memory. */
 static bool
-setup_stack (void **esp) 
+setup_stack (struct process_info *pi, void **esp) 
 {
-  uint8_t *kpage;
-  bool success = false;
+  #define STACK_GROWTH_PAGES 0
+  uint8_t *kpage, *upage;
+  struct vpage_info *vpi_stack;
+  struct vpage_info *vpi_growth[STACK_GROWTH_PAGES];
+  pid_t pid;
 
   kpage = palloc_get_page (PAL_USER | PAL_ZERO);
-  if (kpage != NULL) 
-    {
-      success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true);
-      if (success)
-        *esp = PHYS_BASE;
-      else
-        palloc_free_page (kpage);
+  upage = (uint8_t *)PHYS_BASE - PGSIZE;
+  pid = pi->pid;
+
+  if (!kpage) {
+    goto fail_nofree;
+  }
+  vpi_stack = vpage_info_inmem_allocate(upage, kpage, pid, true);
+  // assme stack can grow up to two pages
+  if (!vpi_stack) {
+    goto fail;
+  }
+  for (int i = 0; i < STACK_GROWTH_PAGES; i++) {
+    if (!(vpi_growth[i] = vpage_info_lazy_allocate(upage - PGSIZE*(i+1), NULL, 0, 0, pid, true))) {
+      vpage_info_release(vpi_stack);
+      for (int j = 0; j < i; j++) {
+        vpage_info_release(vpi_growth[j]);
+      }
+      // vpage_info_release frees kpage, so no freeing
+      goto fail_nofree;
     }
-  return success;
+  }
+  *esp = upage + PGSIZE;
+  return true;
+fail:
+  palloc_free_page(kpage);
+fail_nofree:
+  return false;
 }
 
 /* Adds a mapping from user virtual address UPAGE to kernel

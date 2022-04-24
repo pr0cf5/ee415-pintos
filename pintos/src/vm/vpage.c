@@ -156,10 +156,22 @@ void vpage_init() {
 struct vpage_info *
 vpage_info_lazy_allocate(void *uaddr, struct file *file, off_t offset, size_t length, pid_t pid, bool writable) {
     struct vpage_info *new = malloc(sizeof(struct vpage_info)), *old;
-    struct file *file_copy = file_reopen(file);
-    if (!new || !file_copy) {
+    struct file *file_copy;
+
+    if (!new) {
         return NULL;
     }
+
+    if (file != NULL) {
+        file_copy = file_reopen(file);
+        if (!file_copy) {
+            return NULL;
+        }
+    }
+    else {
+        file_copy = NULL;
+    }
+    
     new->status = VPAGE_LAZY;
     new->uaddr = uaddr;
     new->backend.lazy.file = file_copy;
@@ -198,6 +210,7 @@ vpage_info_inmem_allocate(void *uaddr, void *paddr, pid_t pid, bool writable) {
         goto done;
     }
     hash_insert(&vpage_info_map, &new->elem);
+    pagedir_set_page(thread_current()->pagedir, uaddr, paddr, writable);
 done:
     lock_release(&vm_lock);
     return new;
