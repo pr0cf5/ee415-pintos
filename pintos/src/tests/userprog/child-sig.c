@@ -13,7 +13,6 @@ void sig_handler2(void);
 
 int main(void) {
     test_name = "child-sig";
-
     sigaction(SIGONE, sig_handler1);
     sigaction(SIGTWO, sig_handler2);
     msg("run");

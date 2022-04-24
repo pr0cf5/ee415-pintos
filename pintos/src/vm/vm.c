@@ -18,10 +18,8 @@ void vm_handle_user_fault(void *uaddr, struct intr_frame *f) {
     int i = 0;
     pid_t pid = thread_current()->process_info->pid;
     if (stack_ptr - STACK_EXPANSION_RNG <= fault_ptr && fault_ptr <= stack_ptr + STACK_EXPANSION_RNG) {
-        
-        cur_page = pg_round_down(stack_ptr);
+        cur_page = pg_round_down(fault_ptr);
         end_page = (uint8_t *)(PHYS_BASE - PGSIZE);
-
         i = 0;
         while(cur_page < end_page) {
             if (i >= STACK_MAX_GROWTH_PAGES) {
