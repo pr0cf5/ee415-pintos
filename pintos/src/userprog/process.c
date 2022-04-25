@@ -358,14 +358,6 @@ process_exit (void)
 
   if (cur->process_info) {
     struct process_info *pi = cur->process_info;
-    /* if pi has children, set all of its parent_pi pointers to NULL */
-    // TODO: remove all child_pi from list children_pi
-    for (struct list_elem *e = list_begin(&pi->children_pi);
-      e != list_end(&pi->children_pi); e = list_next(e)) {
-        struct process_info *child_pi = list_entry(e, struct process_info, elem);
-        ASSERT(child_pi->parent_pi == pi);
-        child_pi->parent_pi = NULL;
-    }
     /* free all mmap entries */
     {
       struct list_elem *cur, *next;
@@ -428,7 +420,7 @@ process_exit (void)
     /* allow writes to executables by closing exe_file */
     if (pi->exe_file) {
       file_close(pi->exe_file);
-    }
+    }    
     
     /* if pi has a parent, set exit code, and sema up. If it does not, free the pi structure */
     if (pi->parent_pi) {

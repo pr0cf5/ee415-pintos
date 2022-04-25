@@ -75,7 +75,7 @@ static void
 vpage_info_inmem_to_swap(struct vpage_info *vpi) {
     ASSERT(vpi->status == VPAGE_INMEM);
     uint32_t swap_idx;
-    pagedir_clear_page(thread_current()->pagedir, vpi->uaddr);
+    pagedir_clear_page(vpi->backend.inmem.pagedir, vpi->uaddr);
     swap_idx = swap_out(vpi->backend.inmem.paddr);
     vpi->backend.swap.swap_index = swap_idx;
     vpi->status = VPAGE_SWAPPED;
@@ -227,7 +227,7 @@ vpage_info_swapped_allocate(void *uaddr, uint32_t swap_idx, pid_t pid, bool writ
     if (new == NULL) {
         return NULL;
     }
-    new->status = VPAGE_INMEM;
+    new->status = VPAGE_SWAPPED;
     new->uaddr = uaddr;
     new->backend.swap.swap_index = swap_idx;
     new->pid = pid;
