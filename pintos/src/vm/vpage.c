@@ -12,8 +12,6 @@
 #include "vm/vpage.h"
 #include "filesys/file.h"
 
-#define PAGE_SIZE 0x1000
-
 static struct hash vpage_info_map;
 static struct lock vm_lock;
 
@@ -97,7 +95,7 @@ vpage_info_lazy_to_inmem(struct vpage_info *vpi) {
         lock_release(&filesys_lock);
     }
     else {
-        memset(paddr, 0, PAGE_SIZE);
+        memset(paddr, 0, PGSIZE);
     }
     vpi->backend.inmem.paddr = paddr;
     vpi->backend.inmem.pagedir = thread_current()->pagedir;
