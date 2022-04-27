@@ -605,7 +605,7 @@ load (const char *cmd_line, struct process_info *pi, void (**eip) (void), void *
     }
   lock_acquire(&filesys_lock);
   file_deny_write(file);
-  pi->exe_file = file_reopen(file);
+  pi->exe_file = file;
   lock_release(&filesys_lock);
   if (pi->exe_file == NULL) {
     goto done;
