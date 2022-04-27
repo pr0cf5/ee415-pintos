@@ -101,7 +101,7 @@ vpage_info_lazy_to_inmem(struct vpage_info *vpi) {
     vpi->backend.inmem.pagedir = thread_current()->pagedir;
     vpi->backend.inmem.last_use = timer_ticks();
     vpi->status = VPAGE_INMEM;
-    pagedir_set_page(vpi->backend.inmem.pagedir, vpi->uaddr, paddr, vpi->writable);
+    pagedir_set_page(vpi->backend.inmem.pagedir, vpi->uaddr, paddr, vpi->writable, false);
 }
 
 static void
@@ -116,7 +116,7 @@ vpage_info_swap_to_inmem(struct vpage_info *vpi) {
     vpi->backend.inmem.pagedir = thread_current()->pagedir;
     vpi->backend.inmem.last_use = timer_ticks();
     vpi->status = VPAGE_INMEM;
-    pagedir_set_page(vpi->backend.inmem.pagedir, vpi->uaddr, paddr, vpi->writable);
+    pagedir_set_page(vpi->backend.inmem.pagedir, vpi->uaddr, paddr, vpi->writable, false);
 }
 
 // synchronization must be guaranteed by the caller
@@ -213,7 +213,7 @@ vpage_info_inmem_allocate(void *uaddr, void *paddr, pid_t pid, bool writable) {
         goto done;
     }
     hash_insert(&vpage_info_map, &new->elem);
-    pagedir_set_page(new->backend.inmem.pagedir, uaddr, paddr, writable);
+    pagedir_set_page(new->backend.inmem.pagedir, uaddr, paddr, writable, false);
 done:
     lock_release(&vm_lock);
     return new;
@@ -277,7 +277,7 @@ void vpage_info_set_writable(void *upage, pid_t pid, bool writable, bool *inmem)
                 void *paddr = pagedir_get_page(vpi->backend.inmem.pagedir, upage);
                 ASSERT(paddr);
                 pagedir_clear_page(vpi->backend.inmem.pagedir, upage);
-                pagedir_set_page(vpi->backend.inmem.pagedir, upage, paddr, writable);
+                pagedir_set_page(vpi->backend.inmem.pagedir, upage, paddr, writable, false);
                 *inmem = true;
             }
             goto done;

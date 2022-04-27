@@ -85,17 +85,17 @@ static inline uint32_t *pde_get_pt (uint32_t pde) {
    The PTE's page is readable.
    If WRITABLE is true then it will be writable as well.
    The page will be usable only by ring 0 code (the kernel). */
-static inline uint32_t pte_create_kernel (void *page, bool writable) {
+static inline uint32_t pte_create_kernel (void *page, bool writable, bool huge) {
   ASSERT (pg_ofs (page) == 0);
-  return vtop (page) | PTE_P | (writable ? PTE_W : 0);
+  return vtop (page) | PTE_P | (writable ? PTE_W : 0) | (huge ? PTE_PS : 0);
 }
 
 /* Returns a PTE that points to PAGE.
    The PTE's page is readable.
    If WRITABLE is true then it will be writable as well.
    The page will be usable by both user and kernel code. */
-static inline uint32_t pte_create_user (void *page, bool writable) {
-  return pte_create_kernel (page, writable) | PTE_U;
+static inline uint32_t pte_create_user (void *page, bool writable, bool huge) {
+  return pte_create_kernel (page, writable, huge) | PTE_U;
 }
 
 /* Returns a pointer to the page that page table entry PTE points

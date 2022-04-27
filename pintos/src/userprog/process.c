@@ -735,6 +735,7 @@ load (const char *cmd_line, struct process_info *pi, void (**eip) (void), void *
 /* load() helpers. */
 
 static bool install_page (void *upage, void *kpage, bool writable);
+static bool install_hpage(void *upage, void *kpage, bool writable);
 
 /* Checks whether PHDR describes a valid, loadable segment in
    FILE and returns true if so, false otherwise. */
@@ -805,7 +806,7 @@ load_segment (struct process_info *pi, struct file *file, off_t ofs, uint8_t *up
 
 #ifdef VM
   while (read_bytes > 0 || zero_bytes > 0) 
-    {
+  {
       /* Calculate how to fill this page.
          We will read PAGE_READ_BYTES bytes from FILE
          and zero the final PAGE_ZERO_BYTES bytes. */
@@ -815,12 +816,34 @@ load_segment (struct process_info *pi, struct file *file, off_t ofs, uint8_t *up
       size_t hpage_zero_bytes = HPGSIZE - page_read_bytes;
 
     if (read_bytes + zero_bytes >= HPGSIZE && (uint32_t) pg_round_down(upage) & HPGMASK) {
-      // Huge page
+      // Huge page: just allocate 4 pages and read the file, without lazy loading
+      /* Get a page of memory. */
+      uint8_t *kpage = palloc_get_multiple (PAL_USER, HPGSIZE/PGSIZE);
+      if (kpage == NULL)
+        return false;
+
+      /* Load this page. */
+      if (file_read (file, kpage, page_read_bytes) != (int) page_read_bytes)
+        {
+          palloc_free_multiple (kpage, HPGSIZE/PGSIZE);
+          return false; 
+        }
+      memset (kpage + page_read_bytes, 0, page_zero_bytes);
+
+      /* Add the page to the process's address space. */
+      if (!install_hpage (upage, kpage, writable)) 
+        {
+          palloc_free_multiple (kpage, HPGSIZE/PGSIZE);
+          return false; 
+        }
+
+      /* Advance. */
+      read_bytes -= page_read_bytes;
+      zero_bytes -= page_zero_bytes;
+      upage += HPGSIZE;
     }
     else {
-      // Regular page
-    }
-
+      // Regular page: do lazy loading
       /* Add the page to the process's address space. */
       if (!vpage_info_lazy_allocate(upage, file, ofs, page_read_bytes, pi->pid, writable)) 
       {
@@ -833,6 +856,7 @@ load_segment (struct process_info *pi, struct file *file, off_t ofs, uint8_t *up
       zero_bytes -= page_zero_bytes;
       upage += PGSIZE;
     }
+  }
   return true;
 #else
   file_seek (file, ofs);
@@ -931,5 +955,18 @@ install_page (void *upage, void *kpage, bool writable)
   /* Verify that there's not already a page at that virtual
      address, then map our page there. */
   return (pagedir_get_page (t->pagedir, upage) == NULL
-          && pagedir_set_page (t->pagedir, upage, kpage, writable));
+          && pagedir_set_page (t->pagedir, upage, kpage, writable, false));
+}
+
+/* Adds a mapping from user virtual address UPAGE to kernel
+   virtual address KPAGE to the page table, where huge paging is enabled */
+static bool
+install_hpage (void *upage, void *kpage, bool writable)
+{
+  struct thread *t = thread_current ();
+
+  /* Verify that there's not already a page at that virtual
+     address, then map our page there. */
+  return (pagedir_get_page (t->pagedir, upage) == NULL
+          && pagedir_set_page (t->pagedir, upage, kpage, writable, true));
 }

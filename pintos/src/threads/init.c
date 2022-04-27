@@ -187,7 +187,7 @@ paging_init (void)
           pd[pde_idx] = pde_create (pt);
         }
 
-      pt[pte_idx] = pte_create_kernel (vaddr, !in_kernel_text);
+      pt[pte_idx] = pte_create_kernel (vaddr, !in_kernel_text, false);
     }
 
   /* Store the physical address of the page directory into CR3
