@@ -100,6 +100,50 @@ palloc_get_multiple (enum palloc_flags flags, size_t page_cnt)
   return pages;
 }
 
+void *
+palloc_get_multiple_aligned (enum palloc_flags flags, size_t page_cnt)
+{
+  struct pool *pool = flags & PAL_USER ? &user_pool : &kernel_pool;
+  void *pages;
+  size_t page_idx, desired_r, stride;
+  bool found = false;
+
+  if (page_cnt == 0)
+    return NULL;
+
+  stride = page_cnt ;
+  desired_r = (stride*PGSIZE - (uint32_t)pool->base) % (stride*PGSIZE);
+  desired_r = desired_r / PGSIZE;
+  lock_acquire (&pool->lock);
+  for (page_idx = desired_r; page_idx < bitmap_size(pool->used_map); page_idx += stride) {
+    if (bitmap_count(pool->used_map, page_idx, stride, false) == stride) {
+      bitmap_set_multiple(pool->used_map, page_idx, stride, true);
+      found = true;
+      break;
+    }
+  }
+  lock_release (&pool->lock);
+
+  if (found)
+    pages = pool->base + PGSIZE * page_idx;
+  else
+    pages = NULL;
+
+  if (pages != NULL) 
+    {
+      if (flags & PAL_ZERO)
+        memset (pages, 0, PGSIZE * page_cnt);
+    }
+  else 
+    {
+      if (flags & PAL_ASSERT)
+        PANIC ("palloc_get: out of pages");
+    }
+
+  return pages;
+}
+
+
 /* Obtains a single free page and returns its kernel virtual
    address.
    If PAL_USER is set, the page is obtained from the user pool,

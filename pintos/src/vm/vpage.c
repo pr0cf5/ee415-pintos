@@ -73,7 +73,7 @@ static void
 vpage_info_inmem_to_swap(struct vpage_info *vpi) {
     ASSERT(vpi->status == VPAGE_INMEM);
     uint32_t swap_idx;
-    pagedir_clear_page(vpi->backend.inmem.pagedir, vpi->uaddr);
+    pagedir_clear_page(vpi->backend.inmem.pagedir, vpi->uaddr, false);
     swap_idx = swap_out(vpi->backend.inmem.paddr);
     vpi->backend.swap.swap_index = swap_idx;
     vpi->status = VPAGE_SWAPPED;
@@ -123,7 +123,7 @@ vpage_info_swap_to_inmem(struct vpage_info *vpi) {
 void vpage_info_release_inner(struct vpage_info *vpi) {
     switch (vpi->status) {
         case VPAGE_INMEM: {
-            pagedir_clear_page(vpi->backend.inmem.pagedir, vpi->uaddr);
+            pagedir_clear_page(vpi->backend.inmem.pagedir, vpi->uaddr, false);
             palloc_free_page(vpi->backend.inmem.paddr);
             hash_delete(&vpage_info_map, &vpi->elem);
             free(vpi);
@@ -276,7 +276,7 @@ void vpage_info_set_writable(void *upage, pid_t pid, bool writable, bool *inmem)
             if (vpi->status == VPAGE_INMEM) {
                 void *paddr = pagedir_get_page(vpi->backend.inmem.pagedir, upage);
                 ASSERT(paddr);
-                pagedir_clear_page(vpi->backend.inmem.pagedir, upage);
+                pagedir_clear_page(vpi->backend.inmem.pagedir, upage, false);
                 pagedir_set_page(vpi->backend.inmem.pagedir, upage, paddr, writable, false);
                 *inmem = true;
             }

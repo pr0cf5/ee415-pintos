@@ -34,8 +34,12 @@ pagedir_destroy (uint32_t *pd)
     return;
 
   ASSERT (pd != init_page_dir);
-  for (pde = pd; pde < pd + pd_no (PHYS_BASE); pde++)
-    if (*pde & PTE_P) 
+  for (pde = pd; pde < pd + pd_no (PHYS_BASE); pde++) {
+    if (*pde & PTE_PS) {
+      palloc_free_multiple(pde_get_hpage(*pde), HPGSIZE/PGSIZE);
+    }
+    else {
+      if (*pde & PTE_P) 
       {
         uint32_t *pt = pde_get_pt (*pde);
         uint32_t *pte;
@@ -47,6 +51,8 @@ pagedir_destroy (uint32_t *pd)
         }
         palloc_free_page (pt);
       }
+    }
+  }
   palloc_free_page (pd);
 }
 
@@ -109,16 +115,26 @@ pagedir_set_page (uint32_t *pd, void *upage, void *kpage, bool writable, bool hu
   ASSERT (vtop (kpage) >> PTSHIFT < init_ram_pages);
   ASSERT (pd != init_page_dir);
 
-  pte = lookup_page (pd, upage, true);
+  if (huge) {
+    uint32_t *pde;
+    pde = pd + pd_no (upage);
+    *pde = vtop (kpage) | PTE_U | PTE_P | (writable ? PTE_W : 0) | PTE_PS;
+    return true;
+  }
 
-  if (pte != NULL) 
-    {
-      ASSERT ((*pte & PTE_P) == 0);
-      *pte = pte_create_user (kpage, writable, huge);
-      return true;
-    }
-  else
-    return false;
+  else {
+    pte = lookup_page (pd, upage, true);
+    if (pte != NULL) 
+      {
+        ASSERT ((*pte & PTE_P) == 0);
+        *pte = pte_create_user (kpage, writable);
+        return true;
+      }
+    else
+      return false;
+  }
+
+  
 }
 
 
@@ -145,19 +161,28 @@ pagedir_get_page (uint32_t *pd, const void *uaddr)
    bits in the page table entry are preserved.
    UPAGE need not be mapped. */
 void
-pagedir_clear_page (uint32_t *pd, void *upage) 
+pagedir_clear_page (uint32_t *pd, void *upage, bool huge) 
 {
   uint32_t *pte;
 
   ASSERT (pg_ofs (upage) == 0);
   ASSERT (is_user_vaddr (upage));
 
-  pte = lookup_page (pd, upage, false);
-  if (pte != NULL && (*pte & PTE_P) != 0)
-    {
-      *pte &= ~PTE_P;
-      invalidate_pagedir (pd);
-    }
+  if (huge) {
+    uint32_t *pde;
+    pde = pd + pd_no (upage);
+    *pde = 0;
+  }
+  else {
+    pte = lookup_page (pd, upage, false);
+    if (pte != NULL && (*pte & PTE_P) != 0)
+      {
+        *pte &= ~PTE_P;
+        invalidate_pagedir (pd);
+      }
+  }
+
+  
 }
 
 /* Returns true if the PTE for virtual page VPAGE in PD is dirty,

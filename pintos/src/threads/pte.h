@@ -60,6 +60,7 @@ static inline uintptr_t pd_no (const void *va) {
    "not present", which is just fine. */
 #define PTE_FLAGS 0x00000fff    /* Flag bits. */
 #define PTE_ADDR  0xfffff000    /* Address bits. */
+#define PDE_ADDR  0xffc00000    /* Address bits. */
 #define PTE_AVL   0x00000e00    /* Bits available for OS use. */
 #define PTE_P 0x1               /* 1=present, 0=not present. */
 #define PTE_W 0x2               /* 1=read/write, 0=read-only. */
@@ -85,23 +86,27 @@ static inline uint32_t *pde_get_pt (uint32_t pde) {
    The PTE's page is readable.
    If WRITABLE is true then it will be writable as well.
    The page will be usable only by ring 0 code (the kernel). */
-static inline uint32_t pte_create_kernel (void *page, bool writable, bool huge) {
+static inline uint32_t pte_create_kernel (void *page, bool writable) {
   ASSERT (pg_ofs (page) == 0);
-  return vtop (page) | PTE_P | (writable ? PTE_W : 0) | (huge ? PTE_PS : 0);
+  return vtop (page) | PTE_P | (writable ? PTE_W : 0);
 }
 
 /* Returns a PTE that points to PAGE.
    The PTE's page is readable.
    If WRITABLE is true then it will be writable as well.
    The page will be usable by both user and kernel code. */
-static inline uint32_t pte_create_user (void *page, bool writable, bool huge) {
-  return pte_create_kernel (page, writable, huge) | PTE_U;
+static inline uint32_t pte_create_user (void *page, bool writable) {
+  return pte_create_kernel (page, writable) | PTE_U;
 }
 
 /* Returns a pointer to the page that page table entry PTE points
    to. */
 static inline void *pte_get_page (uint32_t pte) {
   return ptov (pte & PTE_ADDR);
+}
+
+static inline void *pde_get_hpage(uint32_t pde) {
+  return ptov (pde & PDE_ADDR);
 }
 
 #endif /* threads/pte.h */
