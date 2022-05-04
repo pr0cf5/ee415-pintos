@@ -1,0 +1,219 @@
+       	       	    +---------------------------+
+		    |		CS 140		|
+		    | PROJECT 3: VIRTUAL MEMORY	|
+		    |	   DESIGN DOCUMENT	|
+		    +---------------------------+
+
+---- GROUP ----
+
+>> Fill in the names and email addresses of your group members.
+
+Woosun Song wireless@kaist.ac.kr
+
+---- PRELIMINARIES ----
+
+>> If you have any preliminary comments on your submission, notes for the
+>> TAs, or extra credit, please give them here.
+
+I have successfully implemented huge pages. Because for some reason the modified Pintos script does not reflect the modified RAM argument, I created a bash script for executing the performance tests. It is run-benchmark.sh. This script exists in both the master branch and the prj3_hugepage branch. Simply executing the shell script will display the number of ticks.
+
+>> Please cite any offline or online sources you consulted while
+>> preparing your submission, other than the Pintos documentation, course
+>> text, lecture notes, and course staff.
+
+			PAGE TABLE MANAGEMENT
+			=====================
+
+---- DATA STRUCTURES ----
+
+>> A1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+I created a data structure called `vpage_info`. Basically, it stores information about all the pages, including ones not loaded from executables, ones that are in-memory, and ones that are swapped out to disk. The structure definition is below.
+```c
+struct vpage_info {
+    enum vpage_status status;
+    void *uaddr;
+    bool writable;
+    pid_t pid;
+    union vpage_info_backend backend;
+    struct hash_elem elem;
+};
+```
+
+All of these `vpage_info`s are stored in a hashtable called `vpage_info_map`.
+
+---- ALGORITHMS ----
+
+>> A2: In a few paragraphs, describe your code for locating the frame,
+>> if any, that contains the data of a given page.
+
+The entire `vpage_info_map` is iterated to find a `vpage_info` entry that matches the `uaddr` field is equal to the page beginning address and `pid` is equal to the process id of the requestee. Then, if the found `vpage_info` structure is of type `VPAGE_INMEM`, return the `paddr` field of that `vpage_info` structure. The `paddr` field holds the kernel alias of the user page. If the `vpage_info` structure is not of type `VPAGE_INMEM`, and is of type `VPAGE_LAZY` or `VPAGE_SWAPPED` it implies that the page with the corresponding virtual address is not in memory, so there is no corresponding frame.
+
+>> A3: How does your code coordinate accessed and dirty bits between
+>> kernel and user virtual addresses that alias a single frame, or
+>> alternatively how do you avoid the issue?
+
+We can use accessed and dirty bits to distinguish user virtual addresses and their kernel aliases. However, this approach is only necessary when maintaining only the frames separately. Since my design uses a data structure that explicitly holds the relation between pages and frames, there is no need to distinguish kernel and user aliases.
+
+---- SYNCHRONIZATION ----
+
+>> A4: When two user processes both need a new frame at the same time,
+>> how are races avoided?
+
+First, all code in the kernel that accesses the swap table, `vpage_info_map`, or the page directory of another process, are locked using a common global lock called `vm_lock`. However, even with the presence of a lock there might be race conditions if the order between setting the page table and updating relevant kernel data structures is messed up. A simple rule that can be applied is the following: when installing a page to the page table, it should be done at the very last. when removing a page from the page table, it should be done first. This is because `vm_lock` can block other processes only when a page fault is triggered. Therefore, installing to the page table becomes analagous to unlocking other processes and removing from the page table becomes analagous to locking other processes. This order must be strictly obeyed in order to prevent race conditions.
+
+---- RATIONALE ----
+
+>> A5: Why did you choose the data structure(s) that you did for
+>> representing virtual-to-physical mappings?
+
+My rationale for creating a combined data structure that contains information about all pages and their backing stores, is that it can reduce search time. If the swap table, frame table, and supplementary page table are all separated, it takes much time to search them all. However, by combining them altogether, the search can be simplified and search time can be reduced.
+
+		       PAGING TO AND FROM DISK
+		       =======================
+
+---- DATA STRUCTURES ----
+
+>> B1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+A new data structure implemented here is the swap partition allocator. It consists of a bitmap called `swap_free_map`.
+There is no need for a frame table or a swap table because I combined them all into the data structure I denote `vpage_info_map`.
+
+---- ALGORITHMS ----
+
+>> B2: When a frame is required but none is free, some frame must be
+>> evicted.  Describe your code for choosing a frame to evict.
+
+I use the LRU algorithm for eviction. Upon a page being loaded onto memory, it records a timestamp in the corresponding `vpage_info` entry. The eviction algorithm chooses a `vpage_info` entry that has the smallest timestamp, which implies that the longest amount of time has passed since it has been loaded onto memory.
+
+>> B3: When a process P obtains a frame that was previously used by a
+>> process Q, how do you adjust the page table (and any other data
+>> structures) to reflect the frame Q no longer has?
+
+First, I find the `vpage_info` entry corresponding to the page to evict. I first remove the page table entry. This must be done first because of the reason I explained in the SYNCHRONIZATION section. Afterwards, I transition the `vpage_info` structure to a `VPAGE_SWAPPED` structure, allocate a new swap index, and write the entire page to swap. Then, I give the physical page to process P. While doing this, process Q might read or write to the evicted page. Then, it will be blocked by `lock_acquire` in the page fault handler and will be blocked until the eviction process is completed.
+
+>> B4: Explain your heuristic for deciding whether a page fault for an
+>> invalid virtual address should cause the stack to be extended into
+>> the page that faulted.
+
+Upon page fault, I read the `esp` register value at the moment of the page fault. If the page fault address and esp are less than 32 bytes apart, I consider it to be a condition sufficient for stack expansion, and run the code related to expanding the stack.
+
+---- SYNCHRONIZATION ----
+
+>> B5: Explain the basics of your VM synchronization design.  In
+>> particular, explain how it prevents deadlock.  (Refer to the
+>> textbook for an explanation of the necessary conditions for
+>> deadlock.)
+
+There cannot be any deadlocks in the VM synchronization design, because deadlocks only occur when there are multiple locks. 
+
+>> B6: A page fault in process P can cause another process Q's frame
+>> to be evicted.  How do you ensure that Q cannot access or modify
+>> the page during the eviction process?  How do you avoid a race
+>> between P evicting Q's frame and Q faulting the page back in?
+
+Before doing anything, P will first uninstall Q's frame from the page table of Q. Therefore, while Q accesses its frame, it will be caught in the page fault handler. However, the page fault handler is locked with a global lock, so it will be blocked before P completes the eviciton process.
+
+>> B7: Suppose a page fault in process P causes a page to be read from
+>> the file system or swap.  How do you ensure that a second process Q
+>> cannot interfere by e.g. attempting to evict the frame while it is
+>> still being read in?
+
+The only path to cause eviction is to access a page that had been swapped out or not loaded yet. In any case, it will trigger the page fault handler in the context of Q. However, P was originally in the context of a page fault. Therefore, it should have acquired the global lock. Therefore, Q is blocked completely until P completes the actions in the page fault handler.
+
+>> B8: Explain how you handle access to paged-out pages that occur
+>> during system calls.  Do you use page faults to bring in pages (as
+>> in user programs), or do you have a mechanism for "locking" frames
+>> into physical memory, or do you use some other design?  How do you
+>> gracefully handle attempted accesses to invalid virtual addresses?
+
+I use the first method, using page faults to bring in pages. I implement this by writing a pair of functions `enter_fault_region` and `exit_fault_region`. When `enter_fault_region` is called, all page faults are handled equally as user faults, even if they have occurred in kernel context. Accesses to invalid virtual addresses are handled by the page fault handler. Accesses are considered invalid if they do not have a corresponding `vpage_info` entry or attempt to write to read-only page occurred.
+
+---- RATIONALE ----
+
+>> B9: A single lock for the whole VM system would make
+>> synchronization easy, but limit parallelism.  On the other hand,
+>> using many locks complicates synchronization and raises the
+>> possibility for deadlock but allows for high parallelism.  Explain
+>> where your design falls along this continuum and why you chose to
+>> design it this way.
+
+I chose the design of using a single lock for the whole VM system. The rationale for this design is that it is extremely difficult to find dependencies between components, so it is hard to use fine-grained locks. In principle, all page fault handler executions can interfere with each other, due to the fact they have complete access to the `vpage_info_map`, page tables of all processes, and `swap_free_map`. Also, they do not access only one of them at a time. Therefore, it is simpler to use a global lock for the whole system.
+
+			 MEMORY MAPPED FILES
+			 ===================
+
+---- DATA STRUCTURES ----
+
+>> C1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+For the frontend of mmap, I created an `mmap_entry` structure. For every process, there is a list of `mmap_entry`s.
+```c
+typedef int mid_t;
+
+struct mmap_entry {
+    mid_t mid;
+    struct file *file;
+    void *uaddr;
+    size_t length;
+    size_t page_cnt;
+    bool dirty;
+    struct list_elem elem;
+};
+```
+
+---- ALGORITHMS ----
+
+>> C2: Describe how memory mapped files integrate into your virtual
+>> memory subsystem.  Explain how the page fault and eviction
+>> processes differ between swap pages and other pages.
+
+In the page fault handler, mmap segments must be loaded from the file. This is similar to demand pages from executables. However, there is one crucial difference. In order to determine whether writeback should be done, the OS must be aware if mmap segments have been altered in memory. To account for this, I first set the page table entry of mmap segments to read-only, so that on write access the page fault handler will fire due to absence of write permission. During this page fault handler execution, I correctly set the permission to read-write, and mark the `mmap_entry`'s `dirty` flag to `true`, so that writeback is done.
+
+On eviction, writeback to the original file must be done, unlike for executable pages or swap pages. As mentioned in the first paragraph, writeback only needs to be done when the `mmap_entry`'s `dirty` flag is set.
+
+>> C3: Explain how you determine whether a new file mapping overlaps
+>> any existing segment.
+
+Iterate the entire `vpage_info_map` to check if any virtual address overlappings occur with the new mmap address.
+
+---- RATIONALE ----
+
+>> C4: Mappings created with "mmap" have similar semantics to those of
+>> data demand-paged from executables, except that "mmap" mappings are
+>> written back to their original files, not to swap.  This implies
+>> that much of their implementation can be shared.  Explain why your
+>> implementation either does or does not share much of the code for
+>> the two situations.
+
+My implementation shares the backing structures for mmap and demand-paged data from executables. In the VM layer, mmap segments and executable segments are indistinguishable before they are loaded to memory.
+
+			   SURVEY QUESTIONS
+			   ================
+
+Answering these questions is optional, but it will help us improve the
+course in future quarters.  Feel free to tell us anything you
+want--these questions are just to spur your thoughts.  You may also
+choose to respond anonymously in the course evaluations at the end of
+the quarter.
+
+>> In your opinion, was this assignment, or any one of the three problems
+>> in it, too easy or too hard?  Did it take too long or too little time?
+
+>> Did you find that working on a particular part of the assignment gave
+>> you greater insight into some aspect of OS design?
+
+>> Is there some particular fact or hint we should give students in
+>> future quarters to help them solve the problems?  Conversely, did you
+>> find any of our guidance to be misleading?
+
+>> Do you have any suggestions for the TAs to more effectively assist
+>> students, either for future quarters or the remaining projects?
+
+>> Any other comments?
