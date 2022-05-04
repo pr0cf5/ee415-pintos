@@ -31,7 +31,7 @@ void vm_handle_user_fault(void *uaddr, struct intr_frame *f) {
                 continue;
             }
             else {
-                if (!(new_vpis[i] = vpage_info_lazy_allocate(cur_page, NULL, 0, 0, pid, true))) {
+                if (!(new_vpis[i] = vpage_info_lazy_allocate(cur_page, NULL, 0, 0, pid, true, false))) {
                     for (int j = 0; j < i; j++) {
                         if (new_vpis[j]) {
                             vpage_info_release(new_vpis[j]);

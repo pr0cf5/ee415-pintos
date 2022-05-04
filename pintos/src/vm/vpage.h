@@ -20,12 +20,14 @@ struct info_lazy {
     struct file *file;
     off_t offset;
     size_t length;
+    bool huge;
 };
 
 struct info_inmem {
     void *paddr;
     uint32_t *pagedir;
     int64_t last_use;
+    bool huge;
 };
 
 struct info_swap {
@@ -47,7 +49,7 @@ struct vpage_info {
     struct hash_elem elem;
 };
 
-struct vpage_info *vpage_info_lazy_allocate(void *uaddr, struct file *file, off_t offset, size_t length, pid_t pid, bool writable);
+struct vpage_info *vpage_info_lazy_allocate(void *uaddr, struct file *file, off_t offset, size_t length, pid_t pid, bool writable, bool huge);
 struct vpage_info *vpage_info_inmem_allocate(void *uaddr, void *paddr, pid_t pid, bool writable);
 struct vpage_info *vpage_info_swapped_allocate(void *uaddr, uint32_t swap_idx, pid_t pid, bool writable);
 void vpage_info_release(struct vpage_info *vpi);

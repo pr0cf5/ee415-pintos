@@ -83,25 +83,54 @@ vpage_info_inmem_to_swap(struct vpage_info *vpi) {
 static void
 vpage_info_lazy_to_inmem(struct vpage_info *vpi) {
     ASSERT(vpi->status == VPAGE_LAZY);
-    void *paddr;
-    if ((paddr = palloc_get_page(PAL_USER|PAL_ZERO)) == NULL) {
-        paddr = evict_page();
-    }
-    if (vpi->backend.lazy.file) {
-        lock_acquire(&filesys_lock);
-        file_read_at(vpi->backend.lazy.file, paddr, vpi->backend.lazy.length, vpi->backend.lazy.offset);
-        memset((char *)paddr + vpi->backend.lazy.length, 0, PGSIZE - vpi->backend.lazy.length);
-        file_close(vpi->backend.lazy.file);
-        lock_release(&filesys_lock);
+    bool huge;
+    huge = vpi->backend.lazy.huge;
+    if (!huge) {
+        void *paddr;
+        if ((paddr = palloc_get_page(PAL_USER|PAL_ZERO)) == NULL) {
+            paddr = evict_page();
+        }
+        if (vpi->backend.lazy.file) {
+            lock_acquire(&filesys_lock);
+            file_read_at(vpi->backend.lazy.file, paddr, vpi->backend.lazy.length, vpi->backend.lazy.offset);
+            memset((char *)paddr + vpi->backend.lazy.length, 0, PGSIZE - vpi->backend.lazy.length);
+            file_close(vpi->backend.lazy.file);
+            lock_release(&filesys_lock);
+        }
+        else {
+            memset(paddr, 0, PGSIZE);
+        }
+        vpi->backend.inmem.paddr = paddr;
+        vpi->backend.inmem.pagedir = thread_current()->pagedir;
+        vpi->backend.inmem.last_use = timer_ticks();
+        vpi->backend.inmem.huge = false;
+        vpi->status = VPAGE_INMEM;
+        pagedir_set_page(vpi->backend.inmem.pagedir, vpi->uaddr, paddr, vpi->writable, false);
     }
     else {
-        memset(paddr, 0, PGSIZE);
+      /* Add the page to the process's address space. */
+        void *paddr;
+        if ((paddr = palloc_get_multiple_aligned (PAL_USER, HPGSIZE/PGSIZE)) == NULL) {
+            PANIC("Could not lazy-load huge page");
+        }
+        if (vpi->backend.lazy.file) {
+            lock_acquire(&filesys_lock);
+            file_read_at(vpi->backend.lazy.file, paddr, vpi->backend.lazy.length, vpi->backend.lazy.offset);
+            memset((char *)paddr + vpi->backend.lazy.length, 0, HPGSIZE - vpi->backend.lazy.length);
+            file_close(vpi->backend.lazy.file);
+            lock_release(&filesys_lock);
+        }
+        else {
+            memset(paddr, 0, HPGSIZE);
+        }
+        vpi->backend.inmem.paddr = paddr;
+        vpi->backend.inmem.pagedir = thread_current()->pagedir;
+        vpi->backend.inmem.last_use = timer_ticks();
+        vpi->backend.inmem.huge = true;
+        vpi->status = VPAGE_INMEM;
+        pagedir_set_page(vpi->backend.inmem.pagedir, vpi->uaddr, paddr, vpi->writable, true);
     }
-    vpi->backend.inmem.paddr = paddr;
-    vpi->backend.inmem.pagedir = thread_current()->pagedir;
-    vpi->backend.inmem.last_use = timer_ticks();
-    vpi->status = VPAGE_INMEM;
-    pagedir_set_page(vpi->backend.inmem.pagedir, vpi->uaddr, paddr, vpi->writable, false);
+    
 }
 
 static void
@@ -123,10 +152,19 @@ vpage_info_swap_to_inmem(struct vpage_info *vpi) {
 void vpage_info_release_inner(struct vpage_info *vpi) {
     switch (vpi->status) {
         case VPAGE_INMEM: {
-            pagedir_clear_page(vpi->backend.inmem.pagedir, vpi->uaddr, false);
-            palloc_free_page(vpi->backend.inmem.paddr);
-            hash_delete(&vpage_info_map, &vpi->elem);
-            free(vpi);
+            if (!vpi->backend.inmem.huge) {
+                pagedir_clear_page(vpi->backend.inmem.pagedir, vpi->uaddr, false);
+                palloc_free_page(vpi->backend.inmem.paddr);
+                hash_delete(&vpage_info_map, &vpi->elem);
+                free(vpi);
+            }
+            else {
+                pagedir_clear_page(vpi->backend.inmem.pagedir, vpi->uaddr, true);
+                palloc_free_multiple(vpi->backend.inmem.paddr, HPGSIZE/PGSIZE);
+                hash_delete(&vpage_info_map, &vpi->elem);
+                free(vpi);
+            }
+            
             break;
         }
         case VPAGE_LAZY: {
@@ -156,7 +194,7 @@ void vpage_init() {
 }
 
 struct vpage_info *
-vpage_info_lazy_allocate(void *uaddr, struct file *file, off_t offset, size_t length, pid_t pid, bool writable) {
+vpage_info_lazy_allocate(void *uaddr, struct file *file, off_t offset, size_t length, pid_t pid, bool writable, bool huge) {
     struct vpage_info *new = malloc(sizeof(struct vpage_info)), *old;
     struct file *file_copy;
 
@@ -179,6 +217,7 @@ vpage_info_lazy_allocate(void *uaddr, struct file *file, off_t offset, size_t le
     new->backend.lazy.file = file_copy;
     new->backend.lazy.offset = offset;
     new->backend.lazy.length = length;
+    new->backend.lazy.huge = huge;
     new->pid = pid;
     new->writable = writable;
     lock_acquire(&vm_lock);

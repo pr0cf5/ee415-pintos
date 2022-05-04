@@ -815,26 +815,10 @@ load_segment (struct process_info *pi, struct file *file, off_t ofs, uint8_t *up
       size_t hpage_read_bytes = read_bytes < HPGSIZE ? read_bytes : HPGSIZE;
       size_t hpage_zero_bytes = HPGSIZE - hpage_read_bytes;
     if (read_bytes + zero_bytes >= HPGSIZE && ((uint32_t) pg_round_down(upage) & HPGMASK) == 0) {
-      // Huge page: just allocate 4 pages and read the file, without lazy loading
-      uint8_t *kpage = palloc_get_multiple_aligned (PAL_USER, HPGSIZE/PGSIZE);
-      if (kpage == NULL) {
-        return false;
+      if (!vpage_info_lazy_allocate(upage, file, ofs, hpage_read_bytes, pi->pid, writable, true)) 
+      {
+        return false; 
       }
-        
-      /* Load this page. */
-      if (file_read (file, kpage, page_read_bytes) != (int) page_read_bytes)
-        {
-          palloc_free_multiple (kpage, HPGSIZE/PGSIZE);
-          return false; 
-        }
-      memset (kpage + page_read_bytes, 0, page_zero_bytes);
-
-      /* Add the page to the process's address space. */
-      if (!install_hpage (upage, kpage, writable)) 
-        {
-          palloc_free_multiple (kpage, HPGSIZE/PGSIZE);
-          return false; 
-        }
 
       /* Advance. */
       read_bytes -= hpage_read_bytes;
@@ -842,9 +826,7 @@ load_segment (struct process_info *pi, struct file *file, off_t ofs, uint8_t *up
       upage += HPGSIZE;
     }
     else {
-      // Regular page: do lazy loading
-      /* Add the page to the process's address space. */
-      if (!vpage_info_lazy_allocate(upage, file, ofs, page_read_bytes, pi->pid, writable)) 
+      if (!vpage_info_lazy_allocate(upage, file, ofs, page_read_bytes, pi->pid, writable, false)) 
       {
         return false; 
       }
@@ -920,7 +902,7 @@ setup_stack (struct process_info *pi, void **esp)
     goto fail;
   }
   for (int i = 0; i < STACK_GROWTH_PAGES; i++) {
-    if (!(vpi_growth[i] = vpage_info_lazy_allocate(upage - PGSIZE*(i+1), NULL, 0, 0, pid, true))) {
+    if (!(vpi_growth[i] = vpage_info_lazy_allocate(upage - PGSIZE*(i+1), NULL, 0, 0, pid, true, false))) {
       vpage_info_release(vpi_stack);
       for (int j = 0; j < i; j++) {
         vpage_info_release(vpi_growth[j]);

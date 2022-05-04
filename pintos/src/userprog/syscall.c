@@ -152,7 +152,7 @@ static struct mmap_entry *mmap_entry_append(struct file *file, void *upage) {
     struct file *file_copy = file_reopen(file);
     // initially, set permission to read-only
     if (!file_copy || 
-      !vpage_info_lazy_allocate((char *)upage + PGSIZE*i, file_copy, cur_offset, cur_length, thread_current()->process_info->pid, false)) 
+      !vpage_info_lazy_allocate((char *)upage + PGSIZE*i, file_copy, cur_offset, cur_length, thread_current()->process_info->pid, false, false)) 
       {
         free(me);
         for (int j = 0; j < i; j++) {
