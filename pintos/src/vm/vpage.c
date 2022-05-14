@@ -88,11 +88,9 @@ vpage_info_lazy_to_inmem(struct vpage_info *vpi) {
         paddr = evict_page();
     }
     if (vpi->backend.lazy.file) {
-        lock_acquire(&filesys_lock);
         file_read_at(vpi->backend.lazy.file, paddr, vpi->backend.lazy.length, vpi->backend.lazy.offset);
         memset((char *)paddr + vpi->backend.lazy.length, 0, PGSIZE - vpi->backend.lazy.length);
         file_close(vpi->backend.lazy.file);
-        lock_release(&filesys_lock);
     }
     else {
         memset(paddr, 0, PGSIZE);

@@ -8,8 +8,6 @@
 #define PID_ERROR ((pid_t)-1)
 typedef int pid_t;
 
-extern struct lock filesys_lock;
-
 struct pending_signal {
     int signum;
     struct list_elem elem;

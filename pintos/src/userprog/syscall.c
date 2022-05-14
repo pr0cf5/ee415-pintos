@@ -265,7 +265,6 @@ static char *strdup_user(const char *user_string, bool *fault) {
 void
 syscall_init (void) 
 {
-  lock_init(&filesys_lock);
   intr_register_int (0x30, 3, INTR_ON, syscall_handler, "syscall");
 }
 
@@ -282,9 +281,7 @@ sys_open(const char *file_name) {
     return_value = -1;
     goto done_nocopy;
   }
-  lock_acquire(&filesys_lock);
   file = filesys_open(file_name);
-  lock_release(&filesys_lock);
   if (file == NULL) {
     return_value = -1;
     goto done;
@@ -339,9 +336,7 @@ sys_create(const char *file_name, size_t initial_size) {
     return_value = 0;
     goto done_nocopy;
   }
-  lock_acquire(&filesys_lock);
   success = filesys_create(file_name, initial_size);
-  lock_release(&filesys_lock);
   if (!success) {
     return_value = 0;
     goto done;
@@ -370,9 +365,7 @@ sys_remove(const char *file_name) {
     return_value = 0;
     goto done_nocopy;
   }
-  lock_acquire(&filesys_lock);
   success = filesys_remove(file_name);
-  lock_release(&filesys_lock);
   if (!success) {
     return_value = 0;
     goto done;
@@ -403,11 +396,9 @@ sys_read(int fd, void *data, unsigned data_len) {
   }
   switch (f->type) {
     case UserFileStdin: {
-      lock_acquire(&filesys_lock);
       for (int i = 0; i < data_len; i++) {
         copy[i] = input_getc();
       }
-      lock_release(&filesys_lock);
       return_value = data_len;
       goto done;
     }
@@ -416,9 +407,7 @@ sys_read(int fd, void *data, unsigned data_len) {
       goto done;
     }
     case UserFileFile: {
-      lock_acquire(&filesys_lock);
       return_value = file_read(f->inner.file, copy, data_len);
-      lock_release(&filesys_lock);
       if (return_value == -1) {
         goto done;
       }
@@ -468,9 +457,7 @@ sys_write (int fd, void *data, unsigned data_len) {
   }
   switch (f->type) {
     case UserFileStdout: {
-      lock_acquire(&filesys_lock);
       putbuf (copy, data_len);
-      lock_release(&filesys_lock);
       return_value = data_len;
       goto done;
       break;
@@ -481,9 +468,7 @@ sys_write (int fd, void *data, unsigned data_len) {
       break;
     }
     case UserFileFile: {
-      lock_acquire(&filesys_lock);
       return_value = file_write(f->inner.file, copy, data_len);
-      lock_release(&filesys_lock);
       goto done;
       break;
     }
@@ -511,9 +496,7 @@ sys_seek(int fd, unsigned position) {
     goto done;
   }
   if (file->type == UserFileFile) {
-    lock_acquire(&filesys_lock);
     file_seek(file->inner.file, position);
-    lock_release(&filesys_lock);
     return_value = 0;
     goto done;
   }
@@ -535,9 +518,7 @@ sys_tell(int fd) {
     goto done;
   }
   if (file->type == UserFileFile) {
-    lock_acquire(&filesys_lock);
     return_value = file_tell(file->inner.file);
-    lock_release(&filesys_lock);
     goto done;
 
   }
@@ -559,9 +540,7 @@ sys_filesize(int fd) {
     goto done;
   }
   if (file->type == UserFileFile) {
-    lock_acquire(&filesys_lock);
     return_value = file_length(file->inner.file);
-    lock_release(&filesys_lock);
     goto done;
 
   }
@@ -642,9 +621,7 @@ mid_t sys_mmap(int fd, void *data) {
     goto done;
   }
   if (file->type == UserFileFile) {
-    lock_acquire(&filesys_lock);
     mmap_file = file_reopen(file->inner.file);
-    lock_release(&filesys_lock);
     void *upage = pg_round_down(data);
     if (upage != data) {
       mid = -1;

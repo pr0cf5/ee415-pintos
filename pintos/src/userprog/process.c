@@ -23,8 +23,6 @@
 #include "vm/vpage.h"
 #include "vm/swap.h"
 
-struct lock filesys_lock;
-
 static struct pid_allocator pid_allocator;
 /* used to prevent race between exec/wait/exit */
 static struct lock process_lock;
@@ -595,18 +593,14 @@ load (const char *cmd_line, struct process_info *pi, void (**eip) (void), void *
   strlcpy(pi->file_name, cmd_line, file_name_len+1);
 
   /* Open executable file. */
-  lock_acquire(&filesys_lock);
   file = filesys_open (pi->file_name);
-  lock_release(&filesys_lock);
   if (file == NULL) 
     {
       printf ("load: %s: open failed\n", pi->file_name);
       goto done; 
     }
-  lock_acquire(&filesys_lock);
   file_deny_write(file);
   pi->exe_file = file;
-  lock_release(&filesys_lock);
   if (pi->exe_file == NULL) {
     goto done;
   }
