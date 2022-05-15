@@ -47,7 +47,7 @@ file_close (struct file *file)
 {
   if (file != NULL)
     {
-      file_allow_write (file);
+      file_allow_write(file);
       inode_close(file->inode);
       free (file); 
     }
@@ -136,7 +136,7 @@ file_allow_write (struct file *file)
   if (file->deny_write) 
     {
       file->deny_write = false;
-      inode_allow_write (file->inode);
+      inode_allow_write(file->inode);
     }
 }
 

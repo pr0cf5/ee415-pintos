@@ -243,8 +243,8 @@ static bool inode_expand_sectors(struct inode *inode, off_t new_size) {
           }
           cnt_lv1_new = DIV_ROUND_UP(num_sectors_new, SECTORS_PER_ARRAY);
           cnt_lv1_ori = DIV_ROUND_UP(num_sectors_ori, SECTORS_PER_ARRAY);
-          cnt_lv2_new = num_sectors_new % SECTORS_PER_ARRAY;
-          cnt_lv2_ori = num_sectors_ori % SECTORS_PER_ARRAY;
+          cnt_lv2_new = num_sectors_new % SECTORS_PER_ARRAY == 0 ? SECTORS_PER_ARRAY : num_sectors_new % SECTORS_PER_ARRAY;
+          cnt_lv2_ori = num_sectors_ori % SECTORS_PER_ARRAY == 0 ? SECTORS_PER_ARRAY : num_sectors_ori % SECTORS_PER_ARRAY;
           if (cnt_lv1_new == cnt_lv1_ori) {
             ASSERT(cnt_lv2_new != cnt_lv2_ori);
             bcache_read(inode->data.start, sector_array1);
@@ -291,12 +291,9 @@ static bool inode_expand_sectors(struct inode *inode, off_t new_size) {
             
             // 2. determine the remaining fills with the new remaining lengths
             cnt_lv1_new = DIV_ROUND_UP(num_sectors_new, SECTORS_PER_ARRAY);
-            cnt_lv2_new = num_sectors_new % SECTORS_PER_ARRAY;
+            cnt_lv2_new = num_sectors_new % SECTORS_PER_ARRAY == 0 ? SECTORS_PER_ARRAY : num_sectors_new % SECTORS_PER_ARRAY;
             bcache_read(inode->data.start, sector_array1);
             for (i = cnt_lv1_ori; i < cnt_lv1_new; i++) {
-              if (i == cnt_lv1_new-1 && cnt_lv2_new == 0) {
-                break;
-              }
               if (!free_map_allocate(1,&sector_array1[i])) {
                 success = false;
                 free(sector_array1);
@@ -481,7 +478,7 @@ static bool inode_create_huge(block_sector_t sector, off_t length) {
   disk_inode->magic = INODE_MAGIC;
   num_sectors = bytes_to_sectors(length);
   cnt_lv1 = DIV_ROUND_UP(num_sectors, SECTORS_PER_ARRAY);
-  cnt_lv2 = num_sectors % SECTORS_PER_ARRAY;
+  cnt_lv2 = num_sectors % SECTORS_PER_ARRAY == 0 ? SECTORS_PER_ARRAY : num_sectors % SECTORS_PER_ARRAY;
   if (free_map_allocate(1, &arr_lv1)) {
     memset(sector_array1, 0, BLOCK_SECTOR_SIZE);
     for (i = 0; i < cnt_lv1; i++) {
@@ -490,11 +487,8 @@ static bool inode_create_huge(block_sector_t sector, off_t length) {
         goto done;
       }
       else {
-        if (i == cnt_lv1-1 && cnt_lv2 == 0) {
-          break;
-        }
         memset(sector_array2, 0, BLOCK_SECTOR_SIZE);
-        for (j = 0; j < (i == cnt_lv1-1 ? cnt_lv2 : BLOCK_SECTOR_SIZE/sizeof(block_sector_t)); j++) {
+        for (j = 0; j < (i == cnt_lv1-1 ? cnt_lv2 : SECTORS_PER_ARRAY); j++) {
           if (!free_map_allocate(1, &sector_array2[j])) {
             success = false;
             goto done;
@@ -579,7 +573,7 @@ inode_open (block_sector_t sector)
       inode = list_entry (e, struct inode, elem);
       if (inode->sector == sector) 
         {
-           (inode);
+          inode_reopen (inode);
           goto done;
         }
     }
@@ -641,8 +635,9 @@ inode_close (struct inode *inode)
       if (inode->removed) 
         {
           free_map_release (inode->sector, 1);
-          free_map_release (inode->data.start,
-                            bytes_to_sectors (inode->data.length)); 
+          // due to inode structure change, this is not valid anymore
+          //free_map_release (inode->data.start,
+          //                  bytes_to_sectors (inode->data.length)); 
         }
       free(inode); 
     }
