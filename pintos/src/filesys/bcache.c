@@ -54,6 +54,48 @@ void bcache_init () {
 	}
 }
 
+// bounce buffer must be provided by caller
+void bcache_write_at(block_sector_t sector, uint8_t *in, off_t offset, size_t length) {
+	int i, lru_index, free_idx;
+	struct bcache_entry *cur = NULL;
+	int64_t min_last_use = INT64_MAX;
+	free_idx = -1;
+	for (i = 0; i < BCACHE_MAX_ENTRIES; i++) {
+		cur = &bcache[i];
+		lock_acquire(&cur->lock);
+		if (cur->in_use && cur->sector == sector) {
+			memcpy(&cur->data[offset], in, length);
+			lock_release(&cur->lock);
+			return;
+		}
+		if (cur->in_use && cur->last_use < min_last_use) {
+			min_last_use = cur->last_use;
+			lru_index = i;
+		}
+		if (!cur->in_use) {
+			free_idx = i;
+		}
+		lock_release(&cur->lock);
+	}
+	{
+		// Evict the LRU entry
+		if (free_idx == -1) {
+			struct bcache_entry *victim = &bcache[lru_index];
+			lock_acquire(&victim->lock);
+			bcache_entry_occupy(victim, sector);
+			memcpy(&victim->data[offset], in, length);
+			lock_release(&victim->lock);
+		}
+		else {
+			struct bcache_entry *victim = &bcache[free_idx];
+			lock_acquire(&victim->lock);
+			bcache_entry_occupy(victim, sector);
+			memcpy(&victim->data[offset], in, length);
+			lock_release(&victim->lock);
+		}
+	}
+}
+
 void bcache_write(block_sector_t sector, uint8_t *in) {
 	int i, lru_index, free_idx;
 	struct bcache_entry *cur = NULL;

@@ -43,6 +43,24 @@ struct inode
     struct inode_disk data;             /* Inode content. */
   };
 
+/* for inode internals */
+#define INODE_TYPE_SMALL 0x1
+#define INODE_TYPE_LARGE 0x2
+#define INODE_TYPE_HUGE 0x3
+
+#define INODE_SMALL_SECTORS 0x20
+#define INODE_LARGE_SECTORS ((BLOCK_SECTOR_SIZE/sizeof(block_sector_t)))
+#define INODE_HUGE_SECTORS ((BLOCK_SECTOR_SIZE/sizeof(block_sector_t)*BLOCK_SECTOR_SIZE/sizeof(block_sector_t)))
+
+#define SECTOR_INVALID -1
+
+static uint8_t ZEROS[BLOCK_SECTOR_SIZE];
+static block_sector_t byte_to_sector(const struct inode *inode, off_t pos);
+static bool inode_expand(struct inode *inode, off_t new_size);
+static bool inode_create_small(block_sector_t sector, off_t length);
+static bool inode_create_large(block_sector_t sector, off_t length);
+static bool inode_create_huge(block_sector_t sector, off_t length);
+
 /* Returns the block device sector that contains byte offset POS
    within INODE.
    Returns -1 if INODE does not contain data for a byte at offset
@@ -50,33 +68,234 @@ struct inode
 static block_sector_t
 byte_to_sector (const struct inode *inode, off_t pos) 
 {
-  ASSERT (inode != NULL);
-  if (pos < inode->data.length)
-    return inode->data.start + pos / BLOCK_SECTOR_SIZE;
-  else {
-    return -1;
+  block_sector_t *sector_array;
+  block_sector_t sector;
+  ASSERT(inode != NULL);
+
+  sector = SECTOR_INVALID;
+
+  if (pos >= inode->data.length) {
+    return sector;
   }
-    
+  if ((sector_array = calloc(1, BLOCK_SECTOR_SIZE)) == NULL) {
+    return sector;
+  }
+
+  switch (inode->data.type) {
+    case INODE_TYPE_SMALL: {
+      sector = inode->data.start + pos / BLOCK_SECTOR_SIZE;
+      goto done;
+    }
+    case INODE_TYPE_LARGE: {
+      off_t lv1_idx;
+      lv1_idx = pos / BLOCK_SECTOR_SIZE;
+      bcache_read(inode->data.start, sector_array);
+      ASSERT(lv1_idx < BLOCK_SECTOR_SIZE/sizeof(sector_array[0]));
+      sector = sector_array[lv1_idx];
+      goto done;
+    }
+    case INODE_TYPE_HUGE: {
+      off_t lv1_idx, lv2_idx;
+      lv2_idx = (pos / BLOCK_SECTOR_SIZE) % BLOCK_SECTOR_SIZE;
+      lv1_idx = (pos / BLOCK_SECTOR_SIZE) / BLOCK_SECTOR_SIZE;
+      ASSERT(lv1_idx < BLOCK_SECTOR_SIZE/sizeof(sector_array[0]));
+      bcache_read(inode->data.start, sector_array);
+      bcache_read(sector_array[lv1_idx], sector_array);
+      sector = sector_array[lv2_idx];
+      goto done;
+    }
+    default: {
+      NOT_REACHED();
+    }
+  }
+done:
+  free(sector_array);
+  return sector;    
+}
+
+// synchronization must be guaranteed by the caller
+static bool inode_expand(struct inode *inode, off_t new_size) {
+  // rule: 
+  // 1. Determine if inode type change is required. 
+  // If we need to increment the number of sectors for INODE_SMALL, 
+  // we just change it to INODE_LARGE even if it can be accomodated within INODE_SMALL size
+  // 2. If there is inode type change, first allocate the new block sectors. Then copy the contents.
+  // cases: (SMALL -> LARGE), (SMALL -> HUGE), (LARGE -> HUGE)
+  // 3. If there is no inode type change, simply append
+  // TODO: must cleanup disk on returning false. But there are no testcases that test this capability, so I'll just leave it ^^
+  uint8_t *buffer;
+  block_sector_t *sector_array;
+  bool success;
+
+  success = false;
+  if ((buffer = calloc(1,BLOCK_SECTOR_SIZE)) == NULL) {
+    success = false;
+    return success;
+  }
+  sector_array = (block_sector_t *)buffer;
+
+  switch (inode->data.type) {
+    case INODE_TYPE_SMALL: {
+      if (new_size > INODE_HUGE_SECTORS * BLOCK_SECTOR_SIZE) {
+        return false;
+      }
+      else if (new_size > INODE_LARGE_SECTORS * BLOCK_SECTOR_SIZE) {
+        // small -> huge
+        inode_create_huge(inode->sector, new_size);
+        bcache_read(inode->sector, &inode->data);
+      }
+      else {
+        // small -> large
+        inode_create_large(inode->sector, new_size);
+        bcache_read(inode->sector, &inode->data);
+      }
+    }
+    case INODE_TYPE_LARGE: {
+      if (new_size > INODE_LARGE_SECTORS * BLOCK_SECTOR_SIZE) {
+        // large -> huge
+        inode_create_huge(inode->sector, new_size);
+        bcache_read(inode->sector, &inode->data);
+      }
+      else {
+        // expand large
+        block_sector_t num_sectors_new, num_sectors_ori, i;
+        block_sector_t *sector_array;
+        num_sectors_ori = bytes_to_sectors(inode->data.length);
+        num_sectors_new = bytes_to_sectors(inode->data.length);
+        if (num_sectors_ori == num_sectors_new) {
+          success = true;
+          goto done;
+        }
+        else {
+          if ((sector_array = calloc(1,BLOCK_SECTOR_SIZE)) == NULL) {
+            success = false;
+            goto done;
+          }
+          bcache_read(inode->sector, sector_array);
+          // assume optimization here. if it does not optimize it will cause an out of bounds read. but who cares?
+          ASSERT(num_sectors_ori == BLOCK_SECTOR_SIZE/sizeof(block_sector_t) || sector_array[num_sectors_ori] == SECTOR_INVALID);
+          for (i = num_sectors_ori; i < num_sectors_new; i++) {
+            if (!free_map_allocate(1,&sector_array[i])) {
+              success = false;
+              free(sector_array);
+              goto done;
+            }
+          }
+          if (num_sectors_new < BLOCK_SECTOR_SIZE/sizeof(block_sector_t)) {
+            sector_array[num_sectors_new] = SECTOR_INVALID;
+          }
+          bcache_write(inode->data.start, sector_array);
+          free(sector_array);
+          success = true;
+          goto done;
+        }
+      }
+    }
+    case INODE_TYPE_HUGE: {
+      if (new_size > INODE_HUGE_SECTORS * BLOCK_SECTOR_SIZE) {
+        return false;
+      }
+      else {
+        // expand huge
+        block_sector_t num_sectors_new, num_sectors_ori, cnt_lv1_new, cnt_lv1_ori, cnt_lv2_new, cnt_lv2_ori, i,j;
+        block_sector_t *sector_array1, *sector_array2;
+        num_sectors_ori = bytes_to_sectors(inode->data.length);
+        num_sectors_new = bytes_to_sectors(inode->data.length);
+        if (num_sectors_ori == num_sectors_new) {
+          success = true;
+          goto done;
+        }
+        else {
+          if ((sector_array1 = calloc(1,BLOCK_SECTOR_SIZE)) == NULL) {
+            success = false;
+            goto done;
+          }
+          if ((sector_array2 = calloc(1,BLOCK_SECTOR_SIZE)) == NULL) {
+            free(sector_array1);
+            success = false;
+            goto done;
+          }
+          cnt_lv1_new = bytes_to_sectors(num_sectors_new);
+          cnt_lv1_ori = bytes_to_sectors(num_sectors_ori);
+          cnt_lv2_new = num_sectors_new % BLOCK_SECTOR_SIZE;
+          cnt_lv2_ori = num_sectors_ori % BLOCK_SECTOR_SIZE;
+          if (cnt_lv1_new == cnt_lv1_ori) {
+            bcache_read(inode->data.start, sector_array1);
+            bcache_read(sector_array1[cnt_lv1_ori-1], sector_array2);
+            for (i = cnt_lv2_ori; i < cnt_lv2_new; i++) {
+              if (!free_map_allocate(1, &sector_array2[i])) {
+                free(sector_array1);
+                free(sector_array2);
+                success = false;
+                goto done;
+              }
+            }
+            if (cnt_lv2_new < BLOCK_SECTOR_SIZE/sizeof(block_sector_t)) {
+              sector_array2[cnt_lv1_new] = SECTOR_INVALID;
+            }
+            bcache_write(sector_array1[cnt_lv1_ori-1], sector_array2);
+          }
+          else {
+            // 1. fill the last lv2
+            bcache_read(inode->data.start, sector_array1);
+            bcache_read(sector_array1[cnt_lv1_ori], sector_array2);
+            for (i = cnt_lv2_ori; i < BLOCK_SECTOR_SIZE/sizeof(block_sector_t); i++) {
+              if (!free_map_allocate(1,&sector_array2[i])) {
+                success = false;
+                free(sector_array1);
+                free(sector_array2);
+                goto done;
+              }
+              else {
+                num_sectors_new--;
+              }
+            }
+            // 2. determine the remaining fills with the new remaining lengths
+            cnt_lv1_new = bytes_to_sectors(num_sectors_new);
+            cnt_lv2_new = num_sectors_new % BLOCK_SECTOR_SIZE;
+            for (i = cnt_lv1_ori; i < cnt_lv1_new; i++) {
+              if (i == cnt_lv1_new-1 && cnt_lv2_new == 0) {
+                break;
+              }
+              if (!free_map_allocate(1,&sector_array1[i])) {
+                success = false;
+                free(sector_array1);
+                free(sector_array2);
+                goto done;
+              }
+              bcache_read(sector_array1[i], sector_array2);
+              for (j = 0; j < (i == cnt_lv1_new-1 ? cnt_lv2_new : BLOCK_SECTOR_SIZE/sizeof(block_sector_t)); j++) {
+                if (!free_map_allocate(1,&sector_array2[i])) {
+                  success = false;
+                  free(sector_array1);
+                  free(sector_array2);
+                  goto done;
+                }
+              }
+              if (j < BLOCK_SECTOR_SIZE/sizeof(block_sector_t)) {
+                sector_array2[j] = SECTOR_INVALID;
+              }
+              bcache_write(sector_array[i], sector_array2);
+            }
+            bcache_write(inode->data.start, sector_array1);
+            bcache_read(&inode->data, inode->sector);
+          }
+        }
+      }
+    }
+    default: {
+      NOT_REACHED();
+    }
+  }
+done:
+  free(buffer);
+  return success;
 }
 
 /* List of open inodes, so that opening a single inode twice
    returns the same `struct inode'. */
 static struct list open_inodes;
 static struct lock open_inodes_lock;
-
-/* for inode internals */
-#define INODE_TYPE_SMALL 0x1
-#define INODE_TYPE_LARGE 0x2
-#define INODE_TYPE_HUGE 0x3
-
-#define INODE_SMALL_SECTORS 0x100
-#define INODE_LARGE_SECTORS ((BLOCK_SECTOR_SIZE/sizeof(block_sector_t)) * INODE_SMALL_SECTORS)
-#define INODE_HUGE_SECTORS ((BLOCK_SECTOR_SIZE/sizeof(block_sector_t)*BLOCK_SECTOR_SIZE/sizeof(block_sector_t)) * INODE_SMALL_SECTORS)
-
-static uint8_t ZEROS[BLOCK_SECTOR_SIZE];
-static bool inode_create_small(block_sector_t sector, off_t length);
-static bool inode_create_large(block_sector_t sector, off_t length);
-static bool inode_create_huge(block_sector_t sector, off_t length);
 
 static bool inode_create_small(block_sector_t sector, off_t length) {
   bool success = false;
@@ -109,13 +328,116 @@ done:
 }
 
 static bool inode_create_large(block_sector_t sector, off_t length) {
-  PANIC("unimplemented large");
-  return false;
+  // TODO: cleanup when disk is full
+  struct inode_disk *disk_inode;
+  block_sector_t cnt_lv1, arr_lv1, i;
+  block_sector_t *sector_array;
+  bool success = false;
+  if ((disk_inode = calloc(1, sizeof(*disk_inode))) == NULL) {
+    success = false;
+    return success;
+  }
+  if ((sector_array = calloc(1,BLOCK_SECTOR_SIZE)) == NULL) {
+    free(disk_inode);
+    success = false;
+    return success;
+  }
+  disk_inode->length = length;
+  disk_inode->type = INODE_TYPE_LARGE;
+  disk_inode->magic = INODE_MAGIC;
+  cnt_lv1 = bytes_to_sectors(length);
+  if (free_map_allocate(1, &arr_lv1)) {
+    memset(sector_array, 0, BLOCK_SECTOR_SIZE);
+    for (i = 0; i < cnt_lv1; i++) {
+      if (!free_map_allocate(1, &sector_array[i])) {
+        success = false;
+        goto done;
+      }
+      else {
+        bcache_write(sector_array[i], ZEROS);
+      }
+    }
+    // marker
+    if (i < BLOCK_SECTOR_SIZE/sizeof(block_sector_t)) {
+      sector_array[i] = SECTOR_INVALID;
+    }
+    bcache_write(arr_lv1, sector_array);
+  }
+  disk_inode->start = arr_lv1;
+  bcache_write(sector, disk_inode);
+  success = true;
+done:
+  free(sector_array);
+  return success;
 }
 
 static bool inode_create_huge(block_sector_t sector, off_t length) {
-  PANIC("unimplemented huge");
-  return false;
+  // TODO: cleanup when disk is full
+  struct inode_disk *disk_inode;
+  block_sector_t num_sectors, cnt_lv1, arr_lv1, cnt_lv2, i, j;
+  block_sector_t *sector_array1, *sector_array2;
+  bool success = false;
+  if ((disk_inode = calloc(1, sizeof(*disk_inode))) == NULL) {
+    success = false;
+    return success;
+  }
+  if ((sector_array1 = calloc(1,BLOCK_SECTOR_SIZE)) == NULL) {
+    free(disk_inode);
+    success = false;
+    return success;
+  }
+  if ((sector_array2 = calloc(1,BLOCK_SECTOR_SIZE)) == NULL) {
+    free(disk_inode);
+    free(sector_array1);
+    success = false;
+    return success;
+  }
+  disk_inode->length = length;
+  disk_inode->type = INODE_TYPE_LARGE;
+  disk_inode->magic = INODE_MAGIC;
+  num_sectors = bytes_to_sectors(length);
+  cnt_lv1 = bytes_to_sectors(num_sectors);
+  // cnt_lv2 represents the number of block sectors at the last level 1 entry. It is the 'remainder'.
+  cnt_lv2 = num_sectors % BLOCK_SECTOR_SIZE;
+  if (free_map_allocate(1, &arr_lv1)) {
+    memset(sector_array1, 0, BLOCK_SECTOR_SIZE);
+    for (i = 0; i < cnt_lv1; i++) {
+      if (!free_map_allocate(1, &sector_array1[i])) {
+        success = false;
+        goto done;
+      }
+      else {
+        if (i == cnt_lv1-1 && cnt_lv2 == 0) {
+          break;
+        }
+        memset(sector_array2, 0, BLOCK_SECTOR_SIZE);
+        for (j = 0; j < (i == cnt_lv1-1 ? cnt_lv2 : BLOCK_SECTOR_SIZE/sizeof(block_sector_t)); j++) {
+          if (!free_map_allocate(1, &sector_array2[j])) {
+            success = false;
+            goto done;
+          }
+          else {
+            bcache_write(sector_array2[j], ZEROS);
+          }
+        }
+        // this only runs for the last arr1
+        if (j < BLOCK_SECTOR_SIZE/sizeof(block_sector_t)) {
+          sector_array2[j] = SECTOR_INVALID;
+        }
+        bcache_write(sector_array1[i], sector_array2);
+      }
+    }
+    // marker
+    sector_array1[i] = SECTOR_INVALID;
+    bcache_write(arr_lv1, sector_array1);
+  }
+  disk_inode->start = arr_lv1;
+  bcache_write(sector, disk_inode);
+  success = true;
+done:
+  free(sector_array1);
+  free(sector_array2);
+  return success;
 }
 
 /* Initializes the inode module. */
@@ -172,7 +494,7 @@ inode_open (block_sector_t sector)
       inode = list_entry (e, struct inode, elem);
       if (inode->sector == sector) 
         {
-          inode_reopen(inode);
+           (inode);
           goto done;
         }
     }
@@ -182,7 +504,7 @@ inode_open (block_sector_t sector)
   if (inode == NULL) {
     goto done;
   }
-    
+
   /* Initialize. */
   inode->sector = sector;
   inode->open_cnt = 1;
@@ -259,39 +581,51 @@ inode_read_at (struct inode *inode, void *buffer_, off_t size, off_t offset)
 {
   uint8_t *buffer = buffer_;
   off_t bytes_read = 0;
-  uint8_t *bounce = NULL;
-  struct bcache_entry *cache = NULL;
+  uint8_t *bounce_buffer;
+  bool expand;
 
-  bounce = malloc(BLOCK_SECTOR_SIZE);
-  if (bounce == NULL) {
+  if ((bounce_buffer = calloc(1,BLOCK_SECTOR_SIZE)) == NULL) {
     return 0;
   }
+  
+  expand = offset + size >= inode->data.length;
+  if (expand) {
+    lock_acquire(&inode->lock);
+  }
 
-  while (size > 0) 
-    {
-      /* Disk sector to read, starting byte offset within sector. */
-      block_sector_t sector_idx = byte_to_sector (inode, offset);
-      int sector_ofs = offset % BLOCK_SECTOR_SIZE;
-
-      /* Bytes left in inode, bytes left in sector, lesser of the two. */
-      off_t inode_left = inode_length (inode) - offset;
-      int sector_left = BLOCK_SECTOR_SIZE - sector_ofs;
-      int min_left = inode_left < sector_left ? inode_left : sector_left;
-
-      /* Number of bytes to actually copy out of this sector. */
-      int chunk_size = size < min_left ? size : min_left;
-      if (chunk_size <= 0)
-        break;
-      
-      bcache_read(sector_idx, bounce);
-      memcpy(buffer + bytes_read, bounce + sector_ofs, chunk_size);
-
-      /* Advance. */
-      size -= chunk_size;
-      offset += chunk_size;
-      bytes_read += chunk_size;
+  while (size > 0) {
+    /* Block sector to read, starting byte offset within sector. */
+    block_sector_t sector_idx = byte_to_sector(inode, offset);
+    if (sector_idx == SECTOR_INVALID) {
+      break;
     }
-  free (bounce);
+    int sector_ofs = offset % BLOCK_SECTOR_SIZE;
+
+    /* Bytes left in inode, bytes left in sector, lesser of the two. */
+    off_t inode_left = inode_length (inode) - offset;
+    int sector_left = BLOCK_SECTOR_SIZE - sector_ofs;
+    int min_left = inode_left < sector_left ? inode_left : sector_left;
+
+    /* Number of bytes to actually copy out of this sector. */
+    int chunk_size = size < min_left ? size : min_left;
+    if (chunk_size <= 0){
+      break;
+    }
+
+    bcache_read(sector_idx, bounce_buffer);
+    memcpy(buffer+bytes_read, bounce_buffer, chunk_size);
+          
+    /* Advance. */
+    size -= chunk_size;
+    offset += chunk_size;
+    bytes_read += chunk_size;
+  }
+
+  if (expand) {
+    lock_release(&inode->lock);
+  }
+
+  free(bounce_buffer);
   return bytes_read;
 }
 
@@ -301,64 +635,51 @@ inode_read_at (struct inode *inode, void *buffer_, off_t size, off_t offset)
    (Normally a write at end of file would extend the inode, but
    growth is not yet implemented.) */
 off_t
-inode_write_at (struct inode *inode, const void *buffer_, off_t size,
-                off_t offset) 
+inode_write_at (struct inode *inode, const void *buffer_, off_t size, off_t offset) 
 {
-  const uint8_t *buffer = buffer_;
-  off_t bytes_written = 0;
-  uint8_t *bounce = NULL;
-
   if (inode->deny_write_cnt)
     return 0;
 
-  while (size > 0) 
-    {
-      /* Sector to write, starting byte offset within sector. */
-      block_sector_t sector_idx = byte_to_sector (inode, offset);
-      int sector_ofs = offset % BLOCK_SECTOR_SIZE;
+  const uint8_t *buffer = buffer_;
+  uint8_t *bounce_buffer;
+  off_t bytes_written = 0;
+  bool expand;
 
-      /* Bytes left in inode, bytes left in sector, lesser of the two. */
-      off_t inode_left = inode_length (inode) - offset;
-      int sector_left = BLOCK_SECTOR_SIZE - sector_ofs;
-      int min_left = inode_left < sector_left ? inode_left : sector_left;
-
-      /* Number of bytes to actually write into this sector. */
-      int chunk_size = size < min_left ? size : min_left;
-      if (chunk_size <= 0)
-        break;
-
-      if (sector_ofs == 0 && chunk_size == BLOCK_SECTOR_SIZE)
-        {
-          /* Write full sector directly to disk. */
-          bcache_write(sector_idx, buffer + bytes_written);
-        }
-      else 
-        {
-          /* We need a bounce buffer. */
-          if (bounce == NULL) 
-            {
-              bounce = malloc (BLOCK_SECTOR_SIZE);
-              if (bounce == NULL)
-                break;
-            }
-
-          /* If the sector contains data before or after the chunk
-             we're writing, then we need to read in the sector
-             first.  Otherwise we start with a sector of all zeros. */
-          if (sector_ofs > 0 || chunk_size < sector_left) 
-            bcache_read(sector_idx, bounce);
-          else
-            memset (bounce, 0, BLOCK_SECTOR_SIZE);
-          memcpy (bounce + sector_ofs, buffer + bytes_written, chunk_size);
-          bcache_write(sector_idx, bounce);
-        }
-
-      /* Advance. */
-      size -= chunk_size;
-      offset += chunk_size;
-      bytes_written += chunk_size;
+  expand = offset + size >= inode->data.length;
+  if (expand) {
+    lock_acquire(&inode->lock);
+    if (!inode_expand(inode, size+offset)) {
+      lock_release(&inode->lock);
+      return 0;
     }
-  free (bounce);
+  }
+
+  while (size > 0) {
+    /* Sector to write, starting byte offset within sector. */
+    block_sector_t sector_idx = byte_to_sector (inode, offset);
+    int sector_ofs = offset % BLOCK_SECTOR_SIZE;
+
+    /* Bytes left in inode, bytes left in sector, lesser of the two. */
+    off_t inode_left = inode_length (inode) - offset;
+    int sector_left = BLOCK_SECTOR_SIZE - sector_ofs;
+    int min_left = inode_left < sector_left ? inode_left : sector_left;
+
+    /* Number of bytes to actually write into this sector. */
+    int chunk_size = size < min_left ? size : min_left;
+    if (chunk_size <= 0)
+      break;
+
+    bcache_write_at(sector_idx, buffer+bytes_written, sector_ofs, chunk_size);
+
+    /* Advance. */
+    size -= chunk_size;
+    offset += chunk_size;
+    bytes_written += chunk_size;
+  }
+
+  if (expand) {
+    lock_release(&inode->lock);
+  }
 
   return bytes_written;
 }

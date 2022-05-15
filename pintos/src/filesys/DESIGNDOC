@@ -36,7 +36,7 @@ Woosun Song wireless@kaist.ac.kr
 >> A3: Explain how your code avoids a race if two processes attempt to
 >> extend a file at the same time.
 
-For each inode, there is a lock. To extend an indoe, that lock must be acquired. Since the only path in PintOS that can extend a file is by writing to it, there cannot be two simultaneous file extensions due to the per inode lock.
+For each inode, there is a lock. To extend an inode, that lock must be acquired. Since the only path in PintOS that can extend a file is by writing to it, there cannot be two simultaneous file extensions due to the per inode lock.
 
 >> A4: Suppose processes A and B both have file F open, both
 >> positioned at end-of-file.  If A reads and B writes F at the same
