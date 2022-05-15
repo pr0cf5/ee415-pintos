@@ -281,7 +281,7 @@ sys_open(const char *file_name) {
     return_value = -1;
     goto done_nocopy;
   }
-  file = filesys_open(file_name);
+  file = filesys_open(copy);
   if (file == NULL) {
     return_value = -1;
     goto done;
@@ -336,7 +336,7 @@ sys_create(const char *file_name, size_t initial_size) {
     return_value = 0;
     goto done_nocopy;
   }
-  success = filesys_create(file_name, initial_size);
+  success = filesys_create(copy, initial_size);
   if (!success) {
     return_value = 0;
     goto done;
@@ -365,7 +365,7 @@ sys_remove(const char *file_name) {
     return_value = 0;
     goto done_nocopy;
   }
-  success = filesys_remove(file_name);
+  success = filesys_remove(copy);
   if (!success) {
     return_value = 0;
     goto done;

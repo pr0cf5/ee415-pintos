@@ -11,7 +11,7 @@ if __name__ == "__main__":
     cmdline = "pintos -v -k --qemu --filesys-size=2 --swap-size=4 "
     cmdline += "-p tests/vm/child-qsort-mm -a child-qsort-mm " 
     cmdline += "-p tests/vm/page-merge-mm -a page-merge-mm " 
-    cmdline += "-- -q  -f run  page-merge-mm "
+    cmdline += "-- -q  -f run page-merge-mm "
     
     error_log = b""
     pass_cnt = 0
