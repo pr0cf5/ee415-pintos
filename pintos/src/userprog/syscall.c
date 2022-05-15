@@ -654,6 +654,26 @@ void sys_exit(int exit_code) {
   thread_exit();
 }
 
+int sys_chdir(const char *path) {
+  return 0;
+}
+
+int sys_mkdir(const char *path) {
+  return 0;
+}
+
+int sys_readdir(const char *path) {
+  return 0;
+}
+
+int sys_isdir(int fd) {
+  return 0;
+}
+
+int sys_inumber(int fd) {
+  return 0;
+}
+
 static void
 syscall_handler (struct intr_frame *f) 
 {
@@ -677,15 +697,15 @@ syscall_handler (struct intr_frame *f)
       break;
     }
     case SYS_OPEN: {
-      f->eax = sys_open((char *)args_copy.syscall_args[0]);
+      f->eax = sys_open((const char *)args_copy.syscall_args[0]);
       break;
     }
     case SYS_CREATE: {
-      f->eax = sys_create((char *)args_copy.syscall_args[0], (unsigned)args_copy.syscall_args[1]);
+      f->eax = sys_create((const char *)args_copy.syscall_args[0], (unsigned)args_copy.syscall_args[1]);
       break;
     }
     case SYS_REMOVE: {
-      f->eax = sys_remove((char *)args_copy.syscall_args[0]);
+      f->eax = sys_remove((const char *)args_copy.syscall_args[0]);
     }
     case SYS_CLOSE: {
       f->eax = sys_close((int)args_copy.syscall_args[0]);
@@ -737,6 +757,26 @@ syscall_handler (struct intr_frame *f)
     }
     case SYS_MUNMAP: {
       f->eax = sys_munmap((mid_t)args_copy.syscall_args[0]);
+      break;
+    }
+    case SYS_CHDIR: {
+      f->eax = sys_chdir((const char *)args_copy.syscall_args[0]);
+      break;
+    }
+    case SYS_MKDIR: {
+      f->eax = sys_mkdir((const char *)args_copy.syscall_args[0]);
+      break;
+    }
+    case SYS_READDIR: {
+      f->eax = sys_readdir((const char *)args_copy.syscall_args[0]);
+      break;
+    }
+    case SYS_ISDIR: {
+      f->eax = sys_isdir((int)args_copy.syscall_args[0]);
+      break;
+    }
+    case SYS_INUMBER: {
+      f->eax = sys_inumber((int)args_copy.syscall_args[0]);
       break;
     }
     default: {

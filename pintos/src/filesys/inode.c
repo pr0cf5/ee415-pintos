@@ -18,9 +18,11 @@ struct inode_disk
   {
     block_sector_t start;               /* First data sector. */
     off_t length;                       /* File size in bytes. */
-    unsigned type;                      /* Type of inode (small~huge) */
+    uint8_t size_type;                  /* Type of inode in size (small~huge) */
+    uint8_t func_type;                  /* Type of inode in function */
+    uint16_t unused1;
     unsigned magic;                     /* Magic number. */
-    uint32_t unused[124];               /* Not used. */
+    uint32_t unused2[124];              /* Not used. */
   };
 
 /* Returns the number of sectors to allocate for an inode SIZE
@@ -44,9 +46,9 @@ struct inode
   };
 
 /* for inode internals */
-#define INODE_TYPE_SMALL 0x1
-#define INODE_TYPE_LARGE 0x2
-#define INODE_TYPE_HUGE 0x3
+#define INODE_TYPE_SMALL 1
+#define INODE_TYPE_LARGE 2
+#define INODE_TYPE_HUGE 3
 
 #define SECTORS_PER_ARRAY ((BLOCK_SECTOR_SIZE/sizeof(block_sector_t)))
 #define INODE_SMALL_SECTORS 0x20
@@ -59,9 +61,9 @@ static uint8_t ZEROS[BLOCK_SECTOR_SIZE];
 static block_sector_t byte_to_sector(const struct inode *inode, off_t pos);
 static bool inode_expand_sectors(struct inode *inode, off_t new_size);
 static bool inode_expand(struct inode *inode, off_t new_size);
-static bool inode_create_small(block_sector_t sector, off_t length);
-static bool inode_create_large(block_sector_t sector, off_t length);
-static bool inode_create_huge(block_sector_t sector, off_t length);
+static bool inode_create_small(block_sector_t sector, off_t length, uint8_t func_type);
+static bool inode_create_large(block_sector_t sector, off_t length, uint8_t func_type);
+static bool inode_create_huge(block_sector_t sector, off_t length, uint8_t func_type);
 
 /* Returns the block device sector that contains byte offset POS
    within INODE.
@@ -83,7 +85,7 @@ byte_to_sector (const struct inode *inode, off_t pos)
     return sector;
   }
 
-  switch (inode->data.type) {
+  switch (inode->data.size_type) {
     case INODE_TYPE_SMALL: {
       sector = inode->data.start + pos / BLOCK_SECTOR_SIZE;
       goto done;
@@ -136,14 +138,14 @@ static bool inode_expand_sectors(struct inode *inode, off_t new_size) {
   }
   sector_array = (block_sector_t *)buffer;
   disk_inode = (struct inode_disk *)buffer;
-  switch (inode->data.type) {
+  switch (inode->data.size_type) {
     case INODE_TYPE_SMALL: {
       if (new_size > INODE_HUGE_SECTORS * BLOCK_SECTOR_SIZE) {
         return false;
       }
       else if (new_size > INODE_LARGE_SECTORS * BLOCK_SECTOR_SIZE) {
         // small -> huge
-        if (!inode_create_huge(inode->sector, new_size)) {
+        if (!inode_create_huge(inode->sector, new_size, inode->data.func_type)) {
           success = false;
           goto done;
         }
@@ -153,7 +155,7 @@ static bool inode_expand_sectors(struct inode *inode, off_t new_size) {
       }
       else {
         // small -> large
-        if (!inode_create_large(inode->sector, new_size)) {
+        if (!inode_create_large(inode->sector, new_size, inode->data.func_type)) {
           success = false;
           goto done;
         }
@@ -165,7 +167,7 @@ static bool inode_expand_sectors(struct inode *inode, off_t new_size) {
     case INODE_TYPE_LARGE: {
       if (new_size > INODE_LARGE_SECTORS * BLOCK_SECTOR_SIZE) {
         // large -> huge
-        if (!inode_create_huge(inode->sector, new_size)) {
+        if (!inode_create_huge(inode->sector, new_size, inode->data.func_type)) {
           success = false;
           goto done;
         }
@@ -374,7 +376,7 @@ done:
 static struct list open_inodes;
 static struct lock open_inodes_lock;
 
-static bool inode_create_small(block_sector_t sector, off_t length) {
+static bool inode_create_small(block_sector_t sector, off_t length, uint8_t func_type) {
   bool success = false;
   struct inode_disk *disk_inode;
   size_t sectors;
@@ -384,7 +386,8 @@ static bool inode_create_small(block_sector_t sector, off_t length) {
   }
   sectors = bytes_to_sectors(length);
   disk_inode->length = length;
-  disk_inode->type = INODE_TYPE_SMALL;
+  disk_inode->size_type = INODE_TYPE_SMALL;
+  disk_inode->func_type = func_type;
   disk_inode->magic = INODE_MAGIC;
   if (free_map_allocate(sectors, &disk_inode->start)) {
     bcache_write(sector, disk_inode);
@@ -404,7 +407,7 @@ done:
   return success;
 }
 
-static bool inode_create_large(block_sector_t sector, off_t length) {
+static bool inode_create_large(block_sector_t sector, off_t length, uint8_t func_type) {
   // TODO: cleanup when disk is full
   struct inode_disk *disk_inode;
   block_sector_t cnt_lv1, arr_lv1, i;
@@ -420,7 +423,8 @@ static bool inode_create_large(block_sector_t sector, off_t length) {
     return success;
   }
   disk_inode->length = length;
-  disk_inode->type = INODE_TYPE_LARGE;
+  disk_inode->size_type = INODE_TYPE_LARGE;
+  disk_inode->func_type = func_type;
   disk_inode->magic = INODE_MAGIC;
   cnt_lv1 = bytes_to_sectors(length);
   if (free_map_allocate(1, &arr_lv1)) {
@@ -452,7 +456,7 @@ done:
   return success;
 }
 
-static bool inode_create_huge(block_sector_t sector, off_t length) {
+static bool inode_create_huge(block_sector_t sector, off_t length, uint8_t func_type) {
   // TODO: cleanup when disk is full
   struct inode_disk *disk_inode;
   block_sector_t num_sectors, cnt_lv1, arr_lv1, cnt_lv2, i, j;
@@ -474,7 +478,8 @@ static bool inode_create_huge(block_sector_t sector, off_t length) {
     return success;
   }
   disk_inode->length = length;
-  disk_inode->type = INODE_TYPE_HUGE;
+  disk_inode->size_type = INODE_TYPE_HUGE;
+  disk_inode->func_type = func_type;
   disk_inode->magic = INODE_MAGIC;
   num_sectors = bytes_to_sectors(length);
   cnt_lv1 = DIV_ROUND_UP(num_sectors, SECTORS_PER_ARRAY);
@@ -535,19 +540,19 @@ inode_init (void)
    Returns true if successful.
    Returns false if memory or disk allocation fails. */
 bool
-inode_create (block_sector_t sector, off_t length)
+inode_create (block_sector_t sector, off_t length, uint8_t func_type)
 {
   struct inode_disk *disk_inode = NULL;
   bool success = false;
   ASSERT (length >= 0);
   if (length <= BLOCK_SECTOR_SIZE * INODE_SMALL_SECTORS) {
-    success = inode_create_small(sector, length);
+    success = inode_create_small(sector, length, func_type);
   }
   else if (length <= BLOCK_SECTOR_SIZE * INODE_LARGE_SECTORS) {
-    success = inode_create_large(sector, length);
+    success = inode_create_large(sector, length, func_type);
   }
   else if (length <= BLOCK_SECTOR_SIZE * INODE_HUGE_SECTORS) {
-    success = inode_create_huge(sector, length);
+    success = inode_create_huge(sector, length, func_type);
   }
   else {
     // too large to handle

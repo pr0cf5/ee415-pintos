@@ -1,0 +1,1 @@
+void dentry_cache_init();

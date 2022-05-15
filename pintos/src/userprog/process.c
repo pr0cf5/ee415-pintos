@@ -149,6 +149,7 @@ struct process_info *process_info_allocate(struct semaphore *sema, struct proces
   new->parent_pi = parent_pi;
   new->is_critical = false;
   new->exe_file = NULL;
+  new->cwd = NULL;
   strlcpy(new->file_name, "process-default", sizeof(new->file_name));
   list_init(&new->children_pi);
   list_init(&new->user_file_list);
@@ -418,6 +419,11 @@ process_exit (void)
     /* allow writes to executables by closing exe_file */
     if (pi->exe_file) {
       file_close(pi->exe_file);
+    }
+
+    /* close cwd */
+    if (pi->cwd) {
+      dir_close(pi->cwd);
     }    
     
     /* if pi has a parent, set exit code, and sema up. If it does not, free the pi structure */

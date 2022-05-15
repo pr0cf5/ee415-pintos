@@ -65,6 +65,9 @@ struct process_info {
     struct list signal_handler_infos;
     struct lock pending_signals_lock;
     struct list pending_signals;
+
+    /* used for filesystem */
+    struct dir *cwd;
 };
 
 struct process_start_args {
