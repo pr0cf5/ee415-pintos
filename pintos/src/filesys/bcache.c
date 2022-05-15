@@ -55,10 +55,12 @@ void bcache_init () {
 }
 
 // bounce buffer must be provided by caller
-void bcache_write_at(block_sector_t sector, uint8_t *in, off_t offset, size_t length) {
+void bcache_write_at(block_sector_t sector, void *in_, off_t offset, size_t length) {
 	int i, lru_index, free_idx;
 	struct bcache_entry *cur = NULL;
 	int64_t min_last_use = INT64_MAX;
+	uint8_t *in;
+	in = in_;
 	free_idx = -1;
 	for (i = 0; i < BCACHE_MAX_ENTRIES; i++) {
 		cur = &bcache[i];
@@ -96,10 +98,12 @@ void bcache_write_at(block_sector_t sector, uint8_t *in, off_t offset, size_t le
 	}
 }
 
-void bcache_write(block_sector_t sector, uint8_t *in) {
+void bcache_write(block_sector_t sector, void *in_) {
 	int i, lru_index, free_idx;
 	struct bcache_entry *cur = NULL;
 	int64_t min_last_use = INT64_MAX;
+	uint8_t *in;
+	in = in_;
 	free_idx = -1;
 	for (i = 0; i < BCACHE_MAX_ENTRIES; i++) {
 		cur = &bcache[i];
@@ -137,10 +141,12 @@ void bcache_write(block_sector_t sector, uint8_t *in) {
 	}
 }
 
-void bcache_read(block_sector_t sector, uint8_t *out) {
+void bcache_read(block_sector_t sector, void *out_) {
 	int i, lru_index, free_idx;
 	struct bcache_entry *cur = NULL;
 	int64_t min_last_use = INT64_MAX;
+	uint8_t *out;
+	out = out_;
 	free_idx = -1;
 	for (i = 0; i < BCACHE_MAX_ENTRIES; i++) {
 		cur = &bcache[i];
