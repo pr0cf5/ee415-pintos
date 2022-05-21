@@ -11,6 +11,7 @@
 #include "filesys/file.h"
 #include "filesys/filesys.h"
 #include "filesys/directory.h"
+#include "filesys/inode.h"
 #include "devices/input.h"
 #include "vm/vpage.h"
 
@@ -224,9 +225,11 @@ void user_file_release(struct user_file *uf) {
   switch (uf->type) {
     case UserFileDir: {
       dir_close(uf->inner.file);
+      break;
     }
     case UserFileFile: {
       file_close(uf->inner.file);
+      break;
     }
     default: {
       break;
@@ -273,6 +276,7 @@ sys_open(const char *file_name) {
   bool fault;
   int return_value, fd;
   struct file *file;
+  struct dir *dir;
   char *copy = strdup_user(file_name, &fault);
   if (copy == NULL) {
     if (fault) {
@@ -281,16 +285,27 @@ sys_open(const char *file_name) {
     return_value = -1;
     goto done_nocopy;
   }
-  file = filesys_open(copy);
-  if (file == NULL) {
+  file = NULL; dir = NULL;
+  if (!filesys_open(copy, true, &file, &dir)) {
     return_value = -1;
     goto done;
+  }
+  if (file) {
+    if (!append_file(thread_current()->process_info, file, &fd)) {
+      return_value = -1;
+      goto done;
+    }
+  }
+  else if (dir) {
+    if (!append_dir(thread_current()->process_info, dir, &fd)) {
+      return_value = -1;
+      goto done;
+    }
+  }
+  else {
+    NOT_REACHED();
   }
   
-  if (!append_file(thread_current()->process_info, file, &fd)) {
-    return_value = -1;
-    goto done;
-  }
   return_value = fd;
 done:
   free(copy);
@@ -386,7 +401,7 @@ sys_read(int fd, void *data, unsigned data_len) {
     goto done_nocopy;
   }
   struct user_file *f = user_file_get(thread_current()->process_info, fd);
-  if (f == NULL || f->type == UserFileDir) {
+  if (f == NULL) {
     return_value = -1;
     goto done;
   }
@@ -448,7 +463,7 @@ sys_write (int fd, void *data, unsigned data_len) {
   }
 
   struct user_file *f = user_file_get(thread_current()->process_info, fd);
-  if (f == NULL || f->type == UserFileDir) {
+  if (f == NULL) {
     goto done;
   }
   switch (f->type) {
@@ -656,7 +671,7 @@ int sys_chdir(const char *path) {
   struct file *file;
   struct canon_path *cpath;
   struct dir *dir, *old_dir;
-  char *copy, *name;
+  char *copy;
   struct inode *inode;
   copy = strdup_user(path, &fault);
   if (fault) {
@@ -666,11 +681,10 @@ int sys_chdir(const char *path) {
     return_value = 0;
     goto done_nocopy;
   }
-  if (!path_canonicalize(path, &cpath)) {
-    return_value = 1;
+  if (!path_canonicalize(copy, &cpath)) {
+    return_value = 0;
     goto done;
   }
-  name = canon_path_get_leaf(cpath);
   old_dir = thread_current()->process_info->cwd;
   if (!(dir = dir_open_canon_path(cpath, true))) {
     canon_path_release(cpath);
@@ -678,6 +692,7 @@ int sys_chdir(const char *path) {
     return_value = 0;
     goto done;
   }
+  return_value = 1;
   thread_current()->process_info->cwd = dir;
   dir_close(old_dir);
   canon_path_release(cpath);
@@ -711,16 +726,67 @@ done_nocopy:
   return return_value;
 }
 
-int sys_readdir(const char *path) {
-  return 0;
+int sys_readdir(int fd, char *name) {
+  struct user_file *uf;
+  int return_value;
+  if ((uf = user_file_get(thread_current()->process_info, fd)) == NULL) {
+    return_value = 0;
+    goto done;
+  }
+  if (uf->type == UserFileDir) {
+    if (dir_readdir(uf->inner.dir, name)) {
+      return_value = 1;
+      goto done;
+    }
+    else {
+      return_value = 0;
+      goto done;
+    }
+  }
+  else {
+    return_value = 0;
+    goto done;
+  }
+done:
+  return return_value;
 }
 
 int sys_isdir(int fd) {
-  return 0;
+  struct user_file *uf;
+  int return_value;
+  if ((uf = user_file_get(thread_current()->process_info, fd)) == NULL) {
+    return_value = 0;
+    goto done;
+  }
+  if (uf->type == UserFileDir) {
+    return_value = 1;
+    goto done;
+  }
+  else {
+    return_value = 0;
+    goto done;
+  }
+done:
+  return return_value;
 }
 
 int sys_inumber(int fd) {
-  return 0;
+  struct user_file *uf;
+  int return_value;
+  if ((uf = user_file_get(thread_current()->process_info, fd)) == NULL) {
+    return_value = -1;
+    goto done;
+  }
+  if (uf->type == UserFileDir) {
+    return_value = inode_get_inumber(dir_get_inode(uf->inner.dir));
+    goto done;
+  }
+  else {
+    return_value = -1;
+    goto done;
+  }
+done:
+  return return_value;
 }
 
 static void
@@ -755,6 +821,7 @@ syscall_handler (struct intr_frame *f)
     }
     case SYS_REMOVE: {
       f->eax = sys_remove((const char *)args_copy.syscall_args[0]);
+      break;
     }
     case SYS_CLOSE: {
       f->eax = sys_close((int)args_copy.syscall_args[0]);
@@ -817,7 +884,7 @@ syscall_handler (struct intr_frame *f)
       break;
     }
     case SYS_READDIR: {
-      f->eax = sys_readdir((const char *)args_copy.syscall_args[0]);
+      f->eax = sys_readdir((int)args_copy.syscall_args[0], (char *)args_copy.syscall_args[1]);
       break;
     }
     case SYS_ISDIR: {

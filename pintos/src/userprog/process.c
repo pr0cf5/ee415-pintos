@@ -605,8 +605,7 @@ load (const char *cmd_line, struct process_info *pi, void (**eip) (void), void *
   strlcpy(pi->file_name, cmd_line, file_name_len+1);
 
   /* Open executable file. */
-  file = filesys_open (pi->file_name);
-  if (file == NULL) 
+  if (!filesys_open(pi->file_name, false, &file, NULL)) 
     {
       printf ("load: %s: open failed\n", pi->file_name);
       goto done; 

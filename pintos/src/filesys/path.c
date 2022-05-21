@@ -34,6 +34,7 @@ char *canon_path_get_token(struct canon_path *cpath, size_t index) {
 }
 
 char *canon_path_get_leaf(struct canon_path *cpath) {
+    ASSERT(cpath->tokens > 0);
     return cpath->tokens[cpath->tokens_cnt-1];
 }
 
@@ -56,14 +57,18 @@ bool path_canonicalize(const char *path, struct canon_path **out) {
     bool absolute, success;
     char **tokens_buf;
     struct canon_path *rv;
+    if (strlen(path) == 0) {
+        return false;
+    }
     if ((path_cpy = strdup(path)) == NULL) {
         success = false;
-        goto done;
+        return success;
     }
     tokens_cnt = 0;
     list_init(&tokens);
     if (path == NULL || out == NULL) {
-        return false;
+        success = false;
+        goto done;
     }
     if (path_cpy[0] == '/') {
         // absolute path
@@ -88,8 +93,18 @@ bool path_canonicalize(const char *path, struct canon_path **out) {
                     // parent of root is root. do nothing
                 }
                 else {
-                    success = false;
-                    goto done;
+                    // must go out of cwd
+                    struct path_token *newtok;
+                    if (!(newtok = malloc(sizeof(struct path_token)))) {
+                        success = false;
+                        goto done;
+                    }
+                    if (!(newtok->value = strdup(".."))) {
+                        success = false;
+                        goto done;
+                    }
+                    list_push_back(&tokens, &newtok->elem);
+                    tokens_cnt++;
                 }
             }
         }
@@ -98,8 +113,12 @@ bool path_canonicalize(const char *path, struct canon_path **out) {
         }
         else {
             // handle
-            struct path_token *newtok = malloc(sizeof(struct path_token));
-            if ((newtok->value = strdup(probe)) == NULL) {
+            struct path_token *newtok;
+            if (!(newtok = malloc(sizeof(struct path_token)))) {
+                success = false;
+                goto done;
+            }
+            if (!(newtok->value = strdup(probe))) {
                 success = false;
                 goto done;
             }

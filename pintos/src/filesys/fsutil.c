@@ -39,9 +39,9 @@ fsutil_cat (char **argv)
   char *buffer;
 
   printf ("Printing '%s' to the console...\n", file_name);
-  file = filesys_open (file_name);
-  if (file == NULL)
+  if (!filesys_open(file_name, false, &file, NULL)) {
     PANIC ("%s: open failed", file_name);
+  }
   buffer = palloc_get_page (PAL_ASSERT);
   for (;;) 
     {
@@ -119,10 +119,10 @@ fsutil_extract (char **argv UNUSED)
           /* Create destination file. */
           if (!filesys_create (file_name, size, false))
             PANIC ("%s: create failed", file_name);
-          dst = filesys_open (file_name);
-          if (dst == NULL)
+          if (!filesys_open(file_name, false, &dst, NULL)) {
             PANIC ("%s: open failed", file_name);
-
+          }
+            
           /* Do copy. */
           while (size > 0)
             {
@@ -181,9 +181,9 @@ fsutil_append (char **argv)
     PANIC ("couldn't allocate buffer");
 
   /* Open source file. */
-  src = filesys_open (file_name);
-  if (src == NULL)
+  if (!filesys_open(file_name, false, &src, NULL)) {
     PANIC ("%s: open failed", file_name);
+  }
   size = file_length (src);
 
   /* Open target block device. */
