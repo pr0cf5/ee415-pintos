@@ -149,7 +149,13 @@ struct process_info *process_info_allocate(struct semaphore *sema, struct proces
   new->parent_pi = parent_pi;
   new->is_critical = false;
   new->exe_file = NULL;
-  new->cwd = NULL;
+  if (parent_pi == NULL) {
+    new->cwd = dir_open_root();
+  }
+  else {
+    new->cwd = dir_reopen(parent_pi->cwd);
+  }
+  
   strlcpy(new->file_name, "process-default", sizeof(new->file_name));
   list_init(&new->children_pi);
   list_init(&new->user_file_list);

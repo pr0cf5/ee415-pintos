@@ -40,24 +40,43 @@ filesys_done (void)
   free_map_close ();
   bcache_sync();
 }
-
+
 /* Creates a file named NAME with the given INITIAL_SIZE.
    Returns true if successful, false otherwise.
    Fails if a file named NAME already exists,
    or if internal memory allocation fails. */
 bool
-filesys_create (const char *name, off_t initial_size) 
+filesys_create (const char *path, off_t initial_size, bool is_dir) 
 {
   block_sector_t inode_sector = 0;
-  struct dir *dir = dir_open_root ();
-  bool success = (dir != NULL
-                  && free_map_allocate (1, &inode_sector)
-                  && inode_create (inode_sector, initial_size, INODE_TYPE_FILE)
-                  && dir_add (dir, name, inode_sector));
-  if (!success && inode_sector != 0) 
+  char *name;
+  struct canon_path *cpath;
+  bool success;
+  struct dir *dir;
+  if (!path_canonicalize(path, &cpath)) {
+    return false;
+  }
+  name = canon_path_get_leaf(cpath);
+  dir = dir_open_canon_path(cpath, false);
+  if (is_dir) {
+    success = (dir != NULL
+                  && free_map_allocate(1, &inode_sector)
+                  // directories start with capacity of 1
+                  && dir_create(inode_sector, 1)
+                  && dir_add(dir, name, inode_sector));
+  }
+  else {
+    success = (dir != NULL
+                  && free_map_allocate(1, &inode_sector)
+                  && inode_create(inode_sector, initial_size, INODE_TYPE_FILE)
+                  && dir_add(dir, name, inode_sector));
+  }
+  if (!success && inode_sector != 0) {
     free_map_release (inode_sector, 1);
-  dir_close (dir);
-
+  }
+  // this must be called last, because it will free {name}
+  canon_path_release(cpath);
+  dir_close(dir);
   return success;
 }
 
@@ -68,14 +87,25 @@ filesys_create (const char *name, off_t initial_size)
    or if an internal memory allocation fails. */
 struct file *
 filesys_open
-(const char *name)
+(const char *path)
 {
-  struct dir *dir = dir_open_root ();
-  struct inode *inode = NULL;
+  char *name;
+  struct canon_path *cpath;
+  bool success;
+  struct dir *dir;
+  struct inode *inode;
+  if (!path_canonicalize(path, &cpath)) {
+    return false;
+  }
+  name = canon_path_get_leaf(cpath);
+  dir = dir_open_canon_path(cpath, false);
 
-  if (dir != NULL)
+  if (dir != NULL) {
     dir_lookup (dir, name, &inode);
+  }
   dir_close (dir);
+  // this must be done at the very last because it will free {name}
+  canon_path_release(cpath);
   return file_open (inode);
 }
 
@@ -92,7 +122,7 @@ filesys_remove (const char *name)
 
   return success;
 }
-
+
 /* Formats the file system. */
 static void
 do_format (void)

@@ -1,5 +1,5 @@
 #!/bin/sh
 cd build
-pintos -v -k --gdb --qemu --filesys-size=20 --swap-size=4 \
--p tests/vm/mmap-shuffle -a mmap-shuffle \
--- -q  -f run mmap-shuffle
+pintos -v -k --qemu --gdb --filesys-size=20 --swap-size=4 \
+-p tests/filesys/extended/dir-mk-tree -a dir-mk-tree \
+-- -q  -f run dir-mk-tree

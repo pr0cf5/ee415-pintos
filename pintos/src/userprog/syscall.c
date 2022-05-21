@@ -336,12 +336,8 @@ sys_create(const char *file_name, size_t initial_size) {
     return_value = 0;
     goto done_nocopy;
   }
-  success = filesys_create(copy, initial_size);
+  success = filesys_create(copy, initial_size, false);
   if (!success) {
-    return_value = 0;
-    goto done;
-  }
-  if (!append_file(thread_current()->process_info, file, &fd)) {
     return_value = 0;
     goto done;
   }
@@ -655,11 +651,64 @@ void sys_exit(int exit_code) {
 }
 
 int sys_chdir(const char *path) {
-  return 0;
+  bool fault, success;
+  int return_value, fd;
+  struct file *file;
+  struct canon_path *cpath;
+  struct dir *dir, *old_dir;
+  char *copy, *name;
+  struct inode *inode;
+  copy = strdup_user(path, &fault);
+  if (fault) {
+    sys_exit(-1);
+  }
+  if (copy == NULL) {
+    return_value = 0;
+    goto done_nocopy;
+  }
+  if (!path_canonicalize(path, &cpath)) {
+    return_value = 1;
+    goto done;
+  }
+  name = canon_path_get_leaf(cpath);
+  old_dir = thread_current()->process_info->cwd;
+  if (!(dir = dir_open_canon_path(cpath, true))) {
+    canon_path_release(cpath);
+    thread_current()->process_info->cwd = old_dir;
+    return_value = 0;
+    goto done;
+  }
+  thread_current()->process_info->cwd = dir;
+  dir_close(old_dir);
+  canon_path_release(cpath);
+done:
+  free(copy);
+done_nocopy:
+  return return_value;
 }
 
 int sys_mkdir(const char *path) {
-  return 0;
+  bool fault, success;
+  int return_value, fd;
+  struct file *file;
+  char *copy = strdup_user(path, &fault);
+  if (fault) {
+    sys_exit(-1);
+  }
+  if (copy == NULL) {
+    return_value = 0;
+    goto done_nocopy;
+  }
+  success = filesys_create(copy, 0, true);
+  if (!success) {
+    return_value = 0;
+    goto done;
+  }
+  return_value = 1;
+done:
+  free(copy);
+done_nocopy:
+  return return_value;
 }
 
 int sys_readdir(const char *path) {

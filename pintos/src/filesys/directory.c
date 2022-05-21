@@ -5,6 +5,7 @@
 #include "filesys/filesys.h"
 #include "filesys/inode.h"
 #include "threads/malloc.h"
+#include "threads/thread.h"
 #include "threads/synch.h"
 
 static struct lock dir_lock;
@@ -23,72 +24,6 @@ struct dir_entry
     char name[NAME_MAX + 1];            /* Null terminated file name. */
     bool in_use;                        /* In use or free? */
   };
-
-void dir_init() {
-  lock_init(&dir_lock);
-}
-
-/* Creates a directory with space for ENTRY_CNT entries in the
-   given SECTOR.  Returns true if successful, false on failure. */
-bool
-dir_create (block_sector_t sector, size_t entry_cnt)
-{
-  return inode_create (sector, entry_cnt * sizeof (struct dir_entry), INODE_TYPE_DIR);
-}
-
-/* Opens and returns the directory for the given INODE, of which
-   it takes ownership.  Returns a null pointer on failure. */
-struct dir *
-dir_open (struct inode *inode) 
-{
-  struct dir *dir = calloc (1, sizeof *dir);
-  if (inode != NULL && dir != NULL)
-    {
-      dir->inode = inode;
-      dir->pos = 0;
-      return dir;
-    }
-  else
-    {
-      inode_close (inode);
-      free (dir);
-      return NULL; 
-    }
-}
-
-/* Opens the root directory and returns a directory for it.
-   Return true if successful, false on failure. */
-struct dir *
-dir_open_root (void)
-{
-  return dir_open (inode_open (ROOT_DIR_SECTOR));
-}
-
-/* Opens and returns a new directory for the same inode as DIR.
-   Returns a null pointer on failure. */
-struct dir *
-dir_reopen (struct dir *dir) 
-{
-  return dir_open (inode_reopen (dir->inode));
-}
-
-/* Destroys DIR and frees associated resources. */
-void
-dir_close (struct dir *dir) 
-{
-  if (dir != NULL)
-    {
-      inode_close (dir->inode);
-      free (dir);
-    }
-}
-
-/* Returns the inode encapsulated by DIR. */
-struct inode *
-dir_get_inode (struct dir *dir) 
-{
-  return dir->inode;
-}
 
 /* Searches DIR for a file with the given NAME.
    If successful, returns true, sets *EP to the directory entry
@@ -116,6 +51,121 @@ lookup (const struct dir *dir, const char *path,
       }
     }
   return false;
+}
+
+void dir_init() {
+  lock_init(&dir_lock);
+}
+
+/* Creates a directory with space for ENTRY_CNT entries in the
+   given SECTOR.  Returns true if successful, false on failure. */
+bool
+dir_create (block_sector_t sector, size_t entry_cnt)
+{
+  return inode_create (sector, entry_cnt * sizeof (struct dir_entry), INODE_TYPE_DIR);
+}
+
+/* Opens and returns the directory for the given INODE, of which
+   it takes ownership.  Returns a null pointer on failure. */
+struct dir *
+dir_open (struct inode *inode) 
+{
+  ASSERT(inode_is_directory(inode));
+  struct dir *dir = calloc (1, sizeof *dir);
+  if (inode != NULL && dir != NULL)
+    {
+      dir->inode = inode;
+      dir->pos = 0;
+      return dir;
+    }
+  else
+    {
+      inode_close (inode);
+      free (dir);
+      return NULL; 
+    }
+}
+
+/* Opens the root directory and returns a directory for it.
+   Return true if successful, false on failure. */
+struct dir *
+dir_open_root (void)
+{
+  return dir_open (inode_open (ROOT_DIR_SECTOR));
+}
+
+/* Opens the parent's *dir if is_dir is false
+  If is_dir is true, assume the leaf is a directory and open it
+*/
+struct dir *
+dir_open_canon_path(struct canon_path *cpath, bool is_dir) {
+  struct dir *current;
+  size_t token_cnt, i;
+  struct dir_entry ep;
+  struct inode *inode;
+  size_t num_iters;
+  lock_acquire(&dir_lock);
+  if (canon_path_is_absolute(cpath)) {
+    current = dir_open_root();
+  }
+  else {
+    if (thread_current()->process_info) {
+      current = dir_reopen(thread_current()->process_info->cwd);
+    }
+    else {
+      // called in fsutils.c
+      current = dir_open_root();
+    }
+  }
+  token_cnt = canon_path_get_tokens_cnt(cpath);
+  num_iters = is_dir ? token_cnt : token_cnt - 1;
+  for (i = 0; i < num_iters ; i++) {
+    if (!lookup(current, canon_path_get_token(cpath, i), &ep, NULL)) {
+      current = NULL;
+      goto done;
+    }
+    dir_close(current);
+    inode = inode_open(ep.inode_sector);
+    if (!inode_is_directory(inode)) {
+      current = NULL;
+      goto done;
+    }
+    if (!(current = dir_open(inode))) {
+      current = NULL;
+      goto done;
+    }
+  }
+
+done:
+  lock_release(&dir_lock);
+  // at the point of return, current is open
+  return current;
+}
+
+/* Opens and returns a new directory for the same inode as DIR.
+   Returns a null pointer on failure. */
+struct dir *
+dir_reopen (struct dir *dir) 
+{
+  return dir_open (inode_reopen (dir->inode));
+}
+
+/* Destroys DIR and frees associated resources. */
+void
+dir_close (struct dir *dir) 
+{
+  if (dir != NULL)
+    {
+      inode_close (dir->inode);
+      free (dir);
+    }
+}
+
+/* Returns the inode encapsulated by DIR. */
+struct inode *
+dir_get_inode (struct dir *dir) 
+{
+  return dir->inode;
 }
 
 /* Searches DIR for a file with the given NAME
@@ -176,10 +226,6 @@ dir_add (struct dir *dir, const char *path, block_sector_t inode_sector)
        ofs += sizeof e) 
     if (!e.in_use)
       break;
-
-  if ((ofs + sizeof e) > inode_length(dir->inode)) {
-    PANIC("unimplemented directory expansion");
-  }
 
   /* Write slot. */
   e.in_use = true;

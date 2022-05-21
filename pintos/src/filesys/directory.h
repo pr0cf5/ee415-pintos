@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include "devices/block.h"
+#include "filesys/path.h"
 
 /* Maximum length of a file name component.
    This is the traditional UNIX maximum length.
@@ -20,6 +21,7 @@ void dir_init(void);
 bool dir_create (block_sector_t sector, size_t entry_cnt);
 struct dir *dir_open (struct inode *);
 struct dir *dir_open_root (void);
+struct dir *dir_open_canon_path(struct canon_path *cpath, bool is_dir);
 struct dir *dir_reopen (struct dir *);
 void dir_close (struct dir *);
 struct inode *dir_get_inode (struct dir *);

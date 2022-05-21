@@ -795,3 +795,7 @@ inode_length (const struct inode *inode)
 {
   return inode->data.length;
 }
+
+bool inode_is_directory(const struct inode *inode) {
+  return inode->data.func_type == INODE_TYPE_DIR;
+}
