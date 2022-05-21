@@ -299,7 +299,8 @@ dir_remove (struct dir *dir, const char *name)
   // check if inode is a file or a directory with no elements or non-root
   if (inode_is_directory(inode)) {
     victim_dir = dir_open(inode_reopen(inode));
-    if (inode_get_inumber(inode) == ROOT_DIR_SECTOR || lookup_any(victim_dir) || inode_get_open_cnt(inode) > 1) {
+    // the number 2 comes from inode_reopen of victim_dir and inode_open 
+    if (inode_get_inumber(inode) == ROOT_DIR_SECTOR || lookup_any(victim_dir) || inode_get_open_cnt(inode) > 2) {
       dir_close(victim_dir);
       success = false;
       goto done;
