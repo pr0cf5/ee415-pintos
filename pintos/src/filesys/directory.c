@@ -257,8 +257,9 @@ dir_add (struct dir *dir, const char *path, block_sector_t inode_sector)
      read due to something intermittent such as low memory. */
   for (ofs = 0; inode_read_at(dir->inode, &e, sizeof e, ofs) == sizeof e;
        ofs += sizeof e) 
-    if (!e.in_use)
+    if (!e.in_use) {
       break;
+    }
 
   /* Write slot. */
   e.in_use = true;

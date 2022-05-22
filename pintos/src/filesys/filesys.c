@@ -72,8 +72,8 @@ filesys_create (const char *path, off_t initial_size, bool is_dir)
   if (is_dir) {
     success = (dir != NULL
                   && free_map_allocate(1, &inode_sector)
-                  // directories start with capacity of 1
-                  && dir_create(inode_sector, 1, parent_sector)
+                  // directories start with capacity of 10
+                  && dir_create(inode_sector, 10, parent_sector)
                   && dir_add(dir, name, inode_sector));
   }
   else {

@@ -60,7 +60,7 @@ struct inode
 
 static uint8_t ZEROS[BLOCK_SECTOR_SIZE];
 static block_sector_t byte_to_sector(const struct inode *inode, off_t pos);
-static bool inode_expand_sectors(struct inode *inode, off_t new_size);
+static bool inode_expand_sectors(struct inode *inode, off_t new_size, bool *destructive);
 static bool inode_expand(struct inode *inode, off_t new_size);
 static bool inode_create_small(block_sector_t sector, off_t length, uint8_t func_type, block_sector_t parent_sector);
 static bool inode_create_large(block_sector_t sector, off_t length, uint8_t func_type, block_sector_t parent_sector);
@@ -116,9 +116,31 @@ done:
   return sector;    
 }
 
+static bool inode_expand_is_destructive(struct inode *inode, off_t new_size) {
+  switch (inode->data.size_type) {
+    case INODE_TYPE_SMALL: {
+      return true;
+    }
+    case INODE_TYPE_LARGE: {
+      if (new_size > INODE_LARGE_SECTORS * BLOCK_SECTOR_SIZE) {
+        return true;
+      }
+      else {
+        return false;
+      }
+    }
+    case INODE_TYPE_HUGE: {
+      return false;
+    }
+    default: {
+      NOT_REACHED();
+    }
+  }
+}
+
 // synchronization must be guaranteed by the caller
 // this function modifies inode->data, so the caller must preserve it
-static bool inode_expand_sectors(struct inode *inode, off_t new_size) {
+static bool inode_expand_sectors(struct inode *inode, off_t new_size, bool *destructive) {
   // rule: 
   // 1. Determine if inode type change is required. 
   // If we need to increment the number of sectors for INODE_SMALL, 
@@ -151,6 +173,7 @@ static bool inode_expand_sectors(struct inode *inode, off_t new_size) {
           goto done;
         }
         bcache_read(inode->sector, &inode->data);
+        *destructive = true;
         success = true;
         goto done;
       }
@@ -161,6 +184,7 @@ static bool inode_expand_sectors(struct inode *inode, off_t new_size) {
           goto done;
         }
         bcache_read(inode->sector, &inode->data);
+        *destructive = true;
         success = true;
         goto done;
       }
@@ -173,6 +197,7 @@ static bool inode_expand_sectors(struct inode *inode, off_t new_size) {
           goto done;
         }
         bcache_read(inode->sector, &inode->data);
+        *destructive = true;
         success = true;
         goto done;
       }
@@ -186,6 +211,7 @@ static bool inode_expand_sectors(struct inode *inode, off_t new_size) {
         num_sectors_new = bytes_to_sectors(new_size);
         if (num_sectors_ori == num_sectors_new) {
           success = true;
+          *destructive = false;
           bcache_write(inode->sector, &inode->data);
           goto done;
         }
@@ -213,6 +239,7 @@ static bool inode_expand_sectors(struct inode *inode, off_t new_size) {
           // update disk_inode
           bcache_write(inode->sector, &inode->data);
           free(sector_array);
+          *destructive = false;
           success = true;
           goto done;
         }
@@ -230,8 +257,9 @@ static bool inode_expand_sectors(struct inode *inode, off_t new_size) {
         inode->data.length = new_size;
         num_sectors_new = bytes_to_sectors(new_size);
         if (num_sectors_ori == num_sectors_new) {
-          bcache_write(inode->sector, &inode->data);
           success = true;
+          *destructive = false;
+          bcache_write(inode->sector, &inode->data);
           goto done;
         }
         else {
@@ -268,8 +296,9 @@ static bool inode_expand_sectors(struct inode *inode, off_t new_size) {
             }
             bcache_write(sector_array1[cnt_lv1_ori-1], sector_array2);
             // update disk_inode
-            bcache_write(inode->sector, &inode->data);
             success = true;
+            *destructive = false;
+            bcache_write(inode->sector, &inode->data);
             goto done;
           }
           else {
@@ -304,15 +333,15 @@ static bool inode_expand_sectors(struct inode *inode, off_t new_size) {
                 goto done;
               }
               bcache_read(sector_array1[i], sector_array2);
-              for (j = 0; j < (i == cnt_lv1_new-1 ? cnt_lv2_new : BLOCK_SECTOR_SIZE/sizeof(block_sector_t)); j++) {
-                if (!free_map_allocate(1,&sector_array2[i])) {
+              for (j = 0; j < (i == cnt_lv1_new-1 ? cnt_lv2_new : SECTORS_PER_ARRAY); j++) {
+                if (!free_map_allocate(1,&sector_array2[j])) {
                   success = false;
                   free(sector_array1);
                   free(sector_array2);
                   goto done;
                 }
                 else {
-                  bcache_write(sector_array2[i], ZEROS);
+                  bcache_write(sector_array2[j], ZEROS);
                 }
               }
               if (j < SECTORS_PER_ARRAY) {
@@ -325,8 +354,9 @@ static bool inode_expand_sectors(struct inode *inode, off_t new_size) {
             }
             bcache_write(inode->data.start, sector_array1);
             // update disk_inode
-            bcache_write(inode->sector, &inode->data);
             success = true;
+            *destructive = false;
+            bcache_write(inode->sector, &inode->data);
             goto done;
           }
         }
@@ -344,31 +374,51 @@ done:
 static bool inode_expand(struct inode *inode, off_t new_size) {
   uint8_t *original_data;
   off_t original_length;
-  bool success;
+  bool success, destructive_pred, destructive_real;
   original_length = inode->data.length;
   if (original_length == 0) {
-    inode_expand_sectors(inode, new_size);
+    inode_expand_sectors(inode, new_size, &destructive_real);
     return true;
   }
-  if ((original_data = calloc(1,original_length)) == NULL) {
-    success = false;
-    return success;
-  }
+  // determine if expansion is going to be destructive
+  destructive_pred = inode_expand_is_destructive(inode, new_size);
+  
+  // Linearization -> Writeback only needs to be performed when the type of the inode has been altered
+  // For example, from small->large or large->huge. In other cases, it is not necessary
   // Linearize original buffer. This call should NEVER trigger 'expand' because it will cause assertion lock_held_by_current_thread
-  if (inode_read_at(inode, original_data, original_length, 0) != original_length) {
-    success = false;
-    goto done;
+  if (destructive_pred) {
+    if ((original_data = calloc(1,original_length)) == NULL) {
+      success = false;
+      return success;
+    }
+    if (inode_read_at(inode, original_data, original_length, 0) != original_length) {
+      success = false;
+      goto done;
+    }
+    // Expand in the unit of sectors
+    if (!inode_expand_sectors(inode, new_size, &destructive_real)) {
+      success = false;
+      goto done;
+    }
+    ASSERT(destructive_pred == destructive_real);
+    // Copy the original data to the new inode. This call should NEVER trigger 'expand' because it will cause assertion lock_held_by_current_thread.
+    if (inode_write_at(inode, original_data, original_length, 0) != original_length) {
+      success = false;
+      goto done;
+    }
   }
-  // Expand in the unit of sectors
-  inode_expand_sectors(inode, new_size);
-  // Copy the original data to the new inode. This call should NEVER trigger 'expand' because it will cause assertion lock_held_by_current_thread.
-  if (inode_write_at(inode, original_data, original_length, 0) != original_length) {
-    success = false;
-    goto done;
+  else {
+    // just expand sectors, without writing back
+    if (!inode_expand_sectors(inode, new_size, &destructive_real)) {
+      success = false;
+      goto done_nofree;
+    }
+    ASSERT(destructive_pred == destructive_real);
   }
   success = true;
 done:
   free(original_data);
+done_nofree:
   return success;
 }
 

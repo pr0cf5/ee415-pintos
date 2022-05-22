@@ -781,6 +781,10 @@ int sys_inumber(int fd) {
     return_value = inode_get_inumber(dir_get_inode(uf->inner.dir));
     goto done;
   }
+  else if (uf->type == UserFileFile) {
+    return_value = inode_get_inumber(file_get_inode(uf->inner.file));
+    goto done;
+  }
   else {
     return_value = -1;
     goto done;
