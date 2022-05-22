@@ -193,7 +193,6 @@ filesys_remove (const char *path)
   struct canon_path *cpath;
   bool success;
   struct dir *dir;
-  struct inode *inode;
   if (!path_canonicalize(path, &cpath)) {
     return false;
   }

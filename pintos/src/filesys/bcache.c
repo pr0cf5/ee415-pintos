@@ -66,6 +66,7 @@ void bcache_write_at(block_sector_t sector, void *in_, off_t offset, size_t leng
 		cur = &bcache[i];
 		lock_acquire(&cur->lock);
 		if (cur->in_use && cur->sector == sector) {
+			cur->last_use = timer_ticks();
 			memcpy(&cur->data[offset], in, length);
 			lock_release(&cur->lock);
 			return;
@@ -99,46 +100,7 @@ void bcache_write_at(block_sector_t sector, void *in_, off_t offset, size_t leng
 }
 
 void bcache_write(block_sector_t sector, void *in_) {
-	int i, lru_index, free_idx;
-	struct bcache_entry *cur = NULL;
-	int64_t min_last_use = INT64_MAX;
-	uint8_t *in;
-	in = in_;
-	free_idx = -1;
-	for (i = 0; i < BCACHE_MAX_ENTRIES; i++) {
-		cur = &bcache[i];
-		lock_acquire(&cur->lock);
-		if (cur->in_use && cur->sector == sector) {
-			memcpy(cur->data, in, sizeof(cur->data));
-			lock_release(&cur->lock);
-			return;
-		}
-		if (cur->in_use && cur->last_use < min_last_use) {
-			min_last_use = cur->last_use;
-			lru_index = i;
-		}
-		if (!cur->in_use) {
-			free_idx = i;
-		}
-		lock_release(&cur->lock);
-	}
-	{
-		// Evict the LRU entry
-		if (free_idx == -1) {
-			struct bcache_entry *victim = &bcache[lru_index];
-			lock_acquire(&victim->lock);
-			bcache_entry_occupy(victim, sector);
-			memcpy(victim->data, in, sizeof(victim->data));
-			lock_release(&victim->lock);
-		}
-		else {
-			struct bcache_entry *victim = &bcache[free_idx];
-			lock_acquire(&victim->lock);
-			bcache_entry_occupy(victim, sector);
-			memcpy(victim->data, in, sizeof(victim->data));
-			lock_release(&victim->lock);
-		}
-	}
+	bcache_write_at(sector, in_, 0, BLOCK_SECTOR_SIZE);
 }
 
 void bcache_read(block_sector_t sector, void *out_) {
@@ -152,6 +114,7 @@ void bcache_read(block_sector_t sector, void *out_) {
 		cur = &bcache[i];
 		lock_acquire(&cur->lock);
 		if (cur->in_use && cur->sector == sector) {
+			cur->last_use = timer_ticks();
 			memcpy(out, &cur->data, sizeof(cur->data));
 			lock_release(&cur->lock);
 			return;
