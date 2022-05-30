@@ -24,9 +24,9 @@ pass tests/filesys/base/syn-write
 if __name__ == "__main__":
     os.chdir("build")
     cmdline = "pintos -v -k --qemu --filesys-size=20 --swap-size=4 "
-    cmdline += "-p tests/filesys/base/child-syn-wrt -a child-syn-wrt " 
-    cmdline += "-p tests/filesys/base/syn-write -a syn-write " 
-    cmdline += "-- -q  -f run syn-write"
+    cmdline += "-p tests/filesys/base/child-syn-read -a child-syn-read " 
+    cmdline += "-p tests/filesys/base/syn-read -a syn-read " 
+    cmdline += "-- -q  -f run syn-read"
     
     error_log = b""
     pass_cnt = 0
