@@ -8,3 +8,4 @@ char *canon_path_get_leaf(struct canon_path *cpath);
 bool canon_path_is_absolute(struct canon_path *cpath);
 void canon_path_release(struct canon_path *cpath);
 bool path_canonicalize(const char *path, struct canon_path **out);
+bool canon_path_serialize(const struct canon_path *cpath, size_t outer_level, char **out_, size_t *out_length_);

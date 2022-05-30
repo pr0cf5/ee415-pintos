@@ -74,13 +74,13 @@ filesys_create (const char *path, off_t initial_size, bool is_dir)
                   && free_map_allocate(1, &inode_sector)
                   // directories start with capacity of 10
                   && dir_create(inode_sector, 10, parent_sector)
-                  && dir_add(dir, name, inode_sector));
+                  && dir_add(dir, cpath, name, inode_sector, is_dir));
   }
   else {
     success = (dir != NULL
                   && free_map_allocate(1, &inode_sector)
                   && inode_create(inode_sector, initial_size, INODE_TYPE_FILE, parent_sector)
-                  && dir_add(dir, name, inode_sector));
+                  && dir_add(dir, cpath, name, inode_sector, is_dir));
   }
   if (!success && inode_sector != 0) {
     free_map_release (inode_sector, 1);

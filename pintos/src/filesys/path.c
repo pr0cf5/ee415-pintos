@@ -50,6 +50,39 @@ void canon_path_release(struct canon_path *cpath) {
     free(cpath);
 }
 
+bool canon_path_serialize(const struct canon_path *cpath, size_t outer_level, char **out_, size_t *out_length_) {
+    size_t out_length, offset, tok_length, tokens_cnt;
+    char *out;
+    out_length = 1;
+    if (cpath->tokens_cnt <= outer_level) {
+        return false;
+    }
+    tokens_cnt = cpath->tokens_cnt - outer_level;
+    for (int i = 0; i < tokens_cnt; i++) {
+        out_length += strlen(cpath->tokens[i]);
+        out_length += 1; // for /
+    }
+    if ((out = malloc(out_length+1)) == NULL) {
+        return false;
+    }
+    offset = 0;
+    *(out + offset) = '/';
+    offset += 1;
+    for (int i = 0; i < tokens_cnt; i++) {
+        tok_length = strlen(cpath->tokens[i]);
+        memcpy(out + offset, cpath->tokens[i], tok_length);
+        offset += tok_length;
+        if (i < tokens_cnt - 1) {
+            *(out + offset) = '/';
+            offset += 1;
+        }
+    }
+    *(out + offset) = '\0';
+    *out_ = out;
+    *out_length_ = out_length;
+    return true;
+}
+
 bool path_canonicalize(const char *path, struct canon_path **out) {
     char *path_cpy, *next_ptr, *probe;
     struct list tokens;

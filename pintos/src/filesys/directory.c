@@ -7,6 +7,7 @@
 #include "threads/malloc.h"
 #include "threads/thread.h"
 #include "threads/synch.h"
+#include "filesys/dentry_cache.h"
 
 static struct lock dir_lock;
 
@@ -76,6 +77,7 @@ lookup (const struct dir *dir, const char *path,
 
 void dir_init() {
   lock_init(&dir_lock);
+  dentry_cache_init();
 }
 
 /* Creates a directory with space for ENTRY_CNT entries in the
@@ -122,11 +124,31 @@ struct dir *dir_open_canon_path(struct canon_path *cpath, bool is_dir) {
   struct dir *current;
   size_t token_cnt, i;
   struct dir_entry ep;
+  int inumber;
   struct inode *inode;
   size_t num_iters;
   lock_acquire(&dir_lock);
   if (canon_path_is_absolute(cpath)) {
-    current = dir_open_root();
+    // query the dentry cache
+    if (is_dir) {
+      // finds the entry itself
+      if (dentry_cache_query(cpath, 0, &inumber)) {
+        inode = inode_open(inumber);
+        ASSERT(inode_is_directory(inode));
+        current = dir_open(inode);
+        goto done_dontcache;
+      }
+    }
+    // find the first parent
+    if (dentry_cache_query(cpath, 1, &inumber)) {
+      inode = inode_open(inumber);
+      ASSERT(inode_is_directory(inode));
+      current = dir_open(inode);
+      goto done_dontcache;
+    }
+    else {
+      current = dir_open_root();
+    }
   }
   else {
     if (thread_current()->process_info) {
@@ -170,6 +192,14 @@ struct dir *dir_open_canon_path(struct canon_path *cpath, bool is_dir) {
   }
 
 done:
+  if (current && canon_path_is_absolute(cpath)) {
+    if (is_dir) {
+      dentry_cache_append(cpath, 0, inode_get_inumber(dir_get_inode(current)));
+    }
+    dentry_cache_append(cpath, 1, inode_get_inumber(dir_get_inode(dir_get_parent(current))));
+  }
+  
+done_dontcache:
   lock_release(&dir_lock);
   // at the point of return, current is open
   return current;
@@ -230,21 +260,21 @@ dir_lookup (const struct dir *dir, const char *path,
    Fails if NAME is invalid (i.e. too long) or a disk or memory
    error occurs. */
 bool
-dir_add (struct dir *dir, const char *path, block_sector_t inode_sector)
+dir_add (struct dir *dir, const struct canon_path *cpath, const char *name, block_sector_t inode_sector, bool is_dir)
 {
   struct dir_entry e;
   off_t ofs;
   bool success = false;
 
   ASSERT (dir != NULL);
-  ASSERT (path != NULL);
+  ASSERT (name != NULL);
   lock_acquire(&dir_lock);
   /* Check NAME for validity. */
-  if (*path == '\0' || strlen (path) > NAME_MAX)
+  if (*name == '\0' || strlen (name) > NAME_MAX)
     return false;
 
   /* Check that NAME is not in use. */
-  if (lookup (dir, path, NULL, NULL)) {
+  if (lookup (dir, name, NULL, NULL)) {
     goto done;
   }
 
@@ -263,9 +293,15 @@ dir_add (struct dir *dir, const char *path, block_sector_t inode_sector)
 
   /* Write slot. */
   e.in_use = true;
-  strlcpy (e.name, path, sizeof e.name);
+  strlcpy (e.name, name, sizeof e.name);
   e.inode_sector = inode_sector;
   success = inode_write_at(dir->inode, &e, sizeof e, ofs) == sizeof e;
+
+  /* write to dentry cache */
+  if (is_dir) {
+    dentry_cache_append(cpath, 0, inode_sector);
+  }
+  dentry_cache_append(cpath, 1, inode_get_inumber(dir->inode));
 
  done:
  lock_release(&dir_lock);
@@ -308,6 +344,9 @@ dir_remove (struct dir *dir, const char *name)
     }
     dir_close(victim_dir);
   }
+
+  /* remove dentry cache */
+  dentry_cache_invalidate(inode_get_inumber(inode));
 
   /* Erase directory entry. */
   e.in_use = false;
