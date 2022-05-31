@@ -195,8 +195,12 @@ done:
   if (current && canon_path_is_absolute(cpath)) {
     if (is_dir) {
       dentry_cache_append(cpath, 0, inode_get_inumber(dir_get_inode(current)));
+      dentry_cache_append(cpath, 1, inode_get_inumber(dir_get_inode(dir_get_parent(current))));
     }
-    dentry_cache_append(cpath, 1, inode_get_inumber(dir_get_inode(dir_get_parent(current))));
+    else {
+      dentry_cache_append(cpath, 1, inode_get_inumber(dir_get_inode(current)));
+    }
+    
   }
   
 done_dontcache:

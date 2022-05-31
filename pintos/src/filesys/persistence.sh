@@ -1,5 +1,5 @@
 #!/bin/sh
-TEST=dir-mk-tree
+TEST=grow-seq-sm
 cd build
 rm -f tmp.dsk
 pintos-mkdisk tmp.dsk --filesys-size=2

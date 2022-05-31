@@ -130,9 +130,10 @@ void bcache_init () {
 	}
 	lock_init(&read_ahead_lock);
 	cond_init(&read_ahead_condvar);
-	if (thread_create("read-ahead", PRI_DEFAULT, read_ahead_func, NULL) == TID_ERROR) {
-		PANIC("bache_init: thread_create failed");
-	}
+	read_ahead_work_given = false;
+	//if (thread_create("read-ahead", PRI_DEFAULT, read_ahead_func, NULL) == TID_ERROR) {
+	//	PANIC("bache_init: thread_create failed");
+	//}
 }
 
 // bounce buffer must be provided by caller
@@ -185,7 +186,7 @@ void bcache_write(block_sector_t sector, void *in_) {
 }
 
 void bcache_read(block_sector_t sector, void *out_) {
-	bcache_read_internal(sector, out_, true);
+	bcache_read_internal(sector, out_, false);
 }
 
 
