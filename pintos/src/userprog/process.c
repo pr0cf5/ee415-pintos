@@ -20,6 +20,7 @@
 #include "threads/vaddr.h"
 #include "threads/malloc.h"
 #include "threads/synch.h"
+#include "userprog/usermem.h"
 #include "vm/vpage.h"
 #include "vm/swap.h"
 
@@ -679,18 +680,21 @@ load (const char *cmd_line, struct process_info *pi, void (**eip) (void), void *
                   zero_bytes = ROUND_UP (page_offset + phdr.p_memsz, PGSIZE);
                 }
               if (!load_segment (pi, file, file_page, (void *) mem_page,
-                                 read_bytes, zero_bytes, writable))
-                goto done;
+                                 read_bytes, zero_bytes, writable)) {
+                  goto done;
+                }
             }
-          else
-            goto done;
-          break;
+            else {
+              goto done;
+            }
+            break;
         }
     }
 
   /* Set up stack. */
-  if (!setup_stack (pi, esp))
+  if (!setup_stack (pi, esp)) {
     goto done;
+  }
 
   /* setup stack */
   char *user_stack, *cmd_line_copy, *cursor;
@@ -699,7 +703,9 @@ load (const char *cmd_line, struct process_info *pi, void (**eip) (void), void *
   user_stack = (char *)(*esp);
   user_stack -= cmd_line_len;
   cmd_line_copy = user_stack;
+  fault_region_enter();
   strlcpy(user_stack, cmd_line, cmd_line_len);
+  fault_region_exit();
 
   argc = 1;
   cursor = cmd_line_copy;
@@ -716,6 +722,7 @@ load (const char *cmd_line, struct process_info *pi, void (**eip) (void), void *
   }
 
   user_stack -= (argc + 1) * sizeof(void *);
+  fault_region_enter();
   tokenize(cmd_line_copy, (char **)user_stack, &argc);
   {
     void **_user_stack = (void **)user_stack;
@@ -724,6 +731,7 @@ load (const char *cmd_line, struct process_info *pi, void (**eip) (void), void *
     _user_stack[-3] = (void *)0xcafebebe;
     *esp = &_user_stack[-3];
   }
+  fault_region_exit();
 
   /* Start address. */
   *eip = (void (*) (void)) ehdr.e_entry;
@@ -874,33 +882,16 @@ load_segment (struct process_info *pi, struct file *file, off_t ofs, uint8_t *up
 static bool
 setup_stack (struct process_info *pi, void **esp) 
 {
-  #define STACK_GROWTH_PAGES 0
   uint8_t *kpage, *upage;
   struct vpage_info *vpi_stack;
-  struct vpage_info *vpi_growth[STACK_GROWTH_PAGES];
   pid_t pid;
 
-  kpage = palloc_get_page (PAL_USER | PAL_ZERO);
   upage = (uint8_t *)PHYS_BASE - PGSIZE;
   pid = pi->pid;
 
-  if (!kpage) {
-    goto fail_nofree;
-  }
-  vpi_stack = vpage_info_inmem_allocate(upage, kpage, pid, true);
-  // assme stack can grow up to two pages
+  vpi_stack = vpage_info_inmem_allocate(upage, &kpage, pid, true);
   if (!vpi_stack) {
     goto fail;
-  }
-  for (int i = 0; i < STACK_GROWTH_PAGES; i++) {
-    if (!(vpi_growth[i] = vpage_info_lazy_allocate(upage - PGSIZE*(i+1), NULL, 0, 0, pid, true))) {
-      vpage_info_release(vpi_stack);
-      for (int j = 0; j < i; j++) {
-        vpage_info_release(vpi_growth[j]);
-      }
-      // vpage_info_release frees kpage, so no freeing
-      goto fail_nofree;
-    }
   }
   *esp = upage + PGSIZE;
   return true;

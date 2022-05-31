@@ -191,11 +191,17 @@ done:
     return new;
 }
 
+// alloates paddr for you
 struct vpage_info *
-vpage_info_inmem_allocate(void *uaddr, void *paddr, pid_t pid, bool writable) {
+vpage_info_inmem_allocate(void *uaddr, void **paddr_, pid_t pid, bool writable) {
+    void *paddr;
     struct vpage_info *new = malloc(sizeof(struct vpage_info)), *old;
     if (new == NULL) {
         return NULL;
+    }
+    lock_acquire(&vm_lock);
+    if ((paddr = palloc_get_page(PAL_USER|PAL_ZERO)) == NULL) {
+        paddr = evict_page();
     }
     new->status = VPAGE_INMEM;
     new->uaddr = uaddr;
@@ -204,14 +210,16 @@ vpage_info_inmem_allocate(void *uaddr, void *paddr, pid_t pid, bool writable) {
     new->backend.inmem.last_use = timer_ticks();
     new->pid = pid;
     new->writable = writable;
-    lock_acquire(&vm_lock);
+    
     if ((old = hash_find(&vpage_info_map, &new->elem)) != NULL) {
+        NOT_REACHED();
         free(new);
         new = NULL;
         goto done;
     }
     hash_insert(&vpage_info_map, &new->elem);
     pagedir_set_page(new->backend.inmem.pagedir, uaddr, paddr, writable);
+    *paddr_ = paddr;
 done:
     lock_release(&vm_lock);
     return new;
