@@ -15,6 +15,10 @@ Woosun Song wireless@kaist.ac.kr
 >> If you have any preliminary comments on your submission, notes for the
 >> TAs, or extra credit, please give them here.
 
+I have implemented the dentry cache.
+Dentry cache can be disabled by commenting out `#define DENTRY_CACHE 1` in dentry_cache.c, line 9.
+Also, the dentry cache benchmark can be ran by the script `run-benchmark.sh` in filesys directory.
+
 >> Please cite any offline or online sources you consulted while
 >> preparing your submission, other than the Pintos documentation, course
 >> text, lecture notes, and course staff.
@@ -28,8 +32,14 @@ Woosun Song wireless@kaist.ac.kr
 >> `struct' member, global or static variable, `typedef', or
 >> enumeration.  Identify the purpose of each in 25 words or less.
 
+I did not implement any new structures for extensible files.
+
 >> A2: What is the maximum size of a file supported by your inode
 >> structure?  Show your work.
+
+The maximum size of a file supported by my inode is 128 * 128 * 512 bytes.
+The largest inode is a two-level indexed inode, and each level can have up to 512/4 subentries.
+Each 2nd level pointer can accomondate up to 128 * 512 bytes. Furthermore, each 1st level pointer contains 128 2nd level pointers. In total, there are 512 * 128 * 128 bytes available.
 
 ---- SYNCHRONIZATION ----
 
@@ -64,6 +74,8 @@ My synchornization design provides fairness because there is no locking for writ
 >> structure, and what advantages and disadvantages does your
 >> structure have, compared to a multilevel index?
 
+My inode structure is a multilevel index. 
+
 			    SUBDIRECTORIES
 			    ==============
 
@@ -73,10 +85,14 @@ My synchornization design provides fairness because there is no locking for writ
 >> `struct' member, global or static variable, `typedef', or
 >> enumeration.  Identify the purpose of each in 25 words or less.
 
+In `struct process_info`, I've added the `cwd` field, which is of type `struct dir *`.
+
 ---- ALGORITHMS ----
 
 >> B2: Describe your code for traversing a user-specified path.  How
 >> do traversals of absolute and relative paths differ?
+
+Traversals of absolute and relative paths differ in the initial directory selected for iteration. For absolute paths, the initial directory is the root directory. For relative paths, the initial directory is the current working directory.
 
 ---- SYNCHRONIZATION ----
 
@@ -92,10 +108,14 @@ All directory accesses are synchronized via a global lock, `dir_lock`. This effe
 >> working directory?  If so, what happens to that process's future
 >> file system operations?  If not, how do you prevent it?
 
+It does not allow a directory to be removed if it is open by a process or a cwd. This is implemented by prohibiting removal of directories whose inode's reference count is larger than 2. (The threshold is 2 because the victim directory is opened once by the code attempting the removal)
+
 ---- RATIONALE ----
 
 >> B6: Explain why you chose to represent the current directory of a
 >> process the way you did.
+
+I chose to represent the current working directory to `dir *` for the two reasons. First, the time for finding that directory can be reduced greatly. Second, it eliminates the complexity when dealing with races, because as long as the directory structure 'grabs' the inode it has no chance of being removed from memory.
 
 			     BUFFER CACHE
 			     ============
@@ -105,6 +125,18 @@ All directory accesses are synchronized via a global lock, `dir_lock`. This effe
 >> C1: Copy here the declaration of each new or changed `struct' or
 >> `struct' member, global or static variable, `typedef', or
 >> enumeration.  Identify the purpose of each in 25 words or less.
+
+I have implemented the following structure for a buffer cache entry.
+
+```
+struct bcache_entry {
+	struct lock lock;
+	bool in_use;
+	int64_t last_use;
+	block_sector_t sector;
+	uint8_t data[BLOCK_SECTOR_SIZE];
+};
+```
 
 ---- ALGORITHMS ----
 
@@ -117,7 +149,9 @@ My cache replacment polciy is LRU. It is implemented by placing a timestamp fiel
 Write-behind is implemented by 'proxy'ing writes to disk via buffer cache. In `inode.c`, there is code that needs to write to disk. All of these operations are switched to operations writing to the buffer cache.
 
 >> C4: Describe your implementation of read-ahead.
-Read ahead is triggered when the amount of bytes to read are larger than the block size. A new thread is created upon read-ahead triggering. The thread takes the sector index of the next block as argument. The thread reads the corresponding block sector into the buffer cache.
+Read ahead is triggered when the amount of bytes to read are larger than the block size. A new thread is created upon read-ahead triggering. The thread receives the next sector via a condition variable. The thread reads the corresponding block sector into the buffer cache.
+
+However, I disabled my implementation of read-ahead because it had a negative effect on performance. I speculate the reason for the performance drop is because of the synchronziation primitives between the main threads and the read-ahead threads spends too many cycles.
 
 ---- SYNCHRONIZATION ----
 
@@ -136,6 +170,12 @@ This is already explained in C5. Eviction can only occur under the context of a 
 
 >> C7: Describe a file workload likely to benefit from buffer caching,
 >> and workloads likely to benefit from read-ahead and write-behind.
+
+A workload likely to benefit from buffer caching is a workload that operates on the same file, same offset multiple times within a short time period. One example is when two processes are using a small file for IPC.
+
+A workload likely to benefit from read-ahead is long sequential reads. Due to the background thread that performs read-ahead, sequential reads can have at most 2X performance improvement. 
+
+A workload likely to benefit from write-behind is writes to the same location. If writes to the same location are done within a short time period, all of those writes can be synchronized to the disk at once, instead of being written multiple times.
 
 			   SURVEY QUESTIONS
 			   ================
