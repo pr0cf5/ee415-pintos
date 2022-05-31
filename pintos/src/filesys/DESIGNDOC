@@ -74,7 +74,7 @@ My synchornization design provides fairness because there is no locking for writ
 >> structure, and what advantages and disadvantages does your
 >> structure have, compared to a multilevel index?
 
-My inode structure is a multilevel index. 
+My inode structure is not a multilevel index. Instead, it only has one type of level index. I chose this implementation to reduce the complexity of the inode structure. A disadvantage of this implementation is that it is inferior than multilevel indexing in terms of space utilization.
 
 			    SUBDIRECTORIES
 			    ==============

@@ -6,7 +6,7 @@
 #include <stdio.h>
 #include <debug.h>
 
-#define DENTRY_CACHE 1
+//#define DENTRY_CACHE 1
 
 static struct hash dentry_cache;
 
